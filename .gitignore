@@ -1,0 +1,25 @@
+# Secrets — 절대 커밋 금지
+google-services.json
+.env
+.env.*
+*.keystore
+*.jks
+local.properties
+
+# Android / Gradle
+.gradle/
+build/
+.idea/
+*.iml
+captures/
+.kotlin/
+*.apk
+*.aab
+
+# Functions / Firebase
+node_modules/
+functions/lib/
+.firebase/
+.firebaserc
+*-debug.log
+firebase-export-*/

@@ -1,0 +1,135 @@
+rules_version = '2';
+
+// 원칙
+// - 일정 상태, 추천 후보, 확정 시각, 파티 구성, 정산 상태는 Cloud Functions(Admin SDK)만 쓴다.
+// - 클라이언트는 자기 프로필·불가 시간·투표·클리어 기록·채팅만 쓴다.
+// - secrets(API Key, ocid)는 클라이언트에서 읽을 수도 쓸 수도 없다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isMember(partyId) {
+      return signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/parties/$(partyId)).data.memberUids;
+    }
+
+    function scheduleState(partyId, periodId) {
+      return get(/databases/$(database)/documents/parties/$(partyId)/schedules/$(periodId)).data.state;
+    }
+
+    // 불가 시간 입력과 투표를 받는 상태
+    function acceptsInput(partyId, periodId) {
+      return scheduleState(partyId, periodId) in ['OPEN', 'RETRY'];
+    }
+
+    match /secrets/{uid} {
+      allow read, write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+      // apiKeyRegistered 등 나머지 필드는 Functions만 쓴다.
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['displayName', 'selectedCharacterIds'])
+        && validProfile();
+      allow update: if isSelf(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'selectedCharacterIds'])
+        && validProfile();
+      allow delete: if false;
+
+      function validProfile() {
+        let data = request.resource.data;
+        return (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 20))
+          && (!('selectedCharacterIds' in data)
+              || (data.selectedCharacterIds is list && data.selectedCharacterIds.size() <= 50));
+      }
+
+      // 캐릭터 기본 정보 캐시 (ocid 없음)
+      match /characters/{characterId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+
+      // FCM 토큰은 본인만
+      match /devices/{deviceId} {
+        allow read, write: if isSelf(uid);
+      }
+
+      // 확정된 레이드 시간. 확정 트랜잭션만 쓴다.
+      match /busy/{slotId} {
+        allow read: if isSelf(uid);
+        allow write: if false;
+      }
+    }
+
+    match /parties/{partyId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.memberUids;
+      // 개설·가입·탈퇴·위임은 callable에서 처리한다 (목요일 제한, 초대 코드 검사).
+      allow write: if false;
+
+      match /schedules/{periodId} {
+        allow read: if isMember(partyId);
+        allow write: if false;
+
+        match /unavailable/{uid} {
+          allow read: if isMember(partyId);
+          allow create, update: if isSelf(uid) && isMember(partyId) && acceptsInput(partyId, periodId)
+            && request.resource.data.keys().hasOnly(['slots', 'submitted', 'updatedAt'])
+            && request.resource.data.slots is list
+            && request.resource.data.slots.size() <= 1500
+            && request.resource.data.submitted is bool
+            && request.resource.data.updatedAt == request.time;
+          allow delete: if false;
+        }
+
+        // 투표는 본인 문서만 쓸 수 있다.
+        match /votes/{uid} {
+          allow read: if isMember(partyId);
+          allow create, update: if isSelf(uid) && isMember(partyId) && acceptsInput(partyId, periodId)
+            && request.resource.data.keys().hasOnly(['agreed', 'round', 'updatedAt'])
+            && request.resource.data.agreed is list
+            && request.resource.data.agreed.size() <= 3
+            && request.resource.data.round is int
+            && request.resource.data.updatedAt == request.time;
+          allow delete: if false;
+        }
+
+        // 레이드가 끝난 뒤 사용자가 직접 남기는 클리어/미클리어 기록
+        match /clears/{uid} {
+          allow read: if isMember(partyId);
+          allow create, update: if isSelf(uid) && isMember(partyId)
+            && scheduleState(partyId, periodId) in ['LOCKED', 'VERIFYING']
+            && request.resource.data.keys().hasOnly(['result', 'recordedAt'])
+            && request.resource.data.result in ['CLEARED', 'NOT_CLEARED']
+            && request.resource.data.recordedAt == request.time;
+          allow delete: if false;
+        }
+
+        // 분배금 등록, 지급함, 수령 확인은 callable에서 처리한다.
+        match /settlement/{uid} {
+          allow read: if isMember(partyId);
+          allow write: if false;
+        }
+
+        match /messages/{messageId} {
+          allow read: if isMember(partyId);
+          allow create: if isMember(partyId)
+            && request.resource.data.keys().hasOnly(['senderUid', 'text', 'createdAt'])
+            && request.resource.data.senderUid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 500
+            && request.resource.data.createdAt == request.time;
+          allow update, delete: if false;
+        }
+      }
+    }
+  }
+}
