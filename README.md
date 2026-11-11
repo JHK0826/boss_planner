@@ -45,13 +45,14 @@
 
 ## 주요 기능
 
-- **불가 시간 체크:** 30분 단위 주간 시간표에서 안 되는 칸만 탭
-- **추천 시간 계산:** 파티원 전원이 가능한 구간 중 보스 소요 시간 이상인 구간을 빠른 순 3개 추천
+- **불가 시간 체크:** 30분 단위 주간 시간표에서 안 되는 칸만 탭하고 **제출** (안 되는 시간이 없어도 제출)
+- **추천 시간 계산:** 파티원 전원이 가능한 구간 중 보스 소요 시간 이상인 구간을 빠른 순 3개 추천. 다른 파티에서 이미 확정된 시간은 불가 시간과 똑같이 제외
+- **그 주 미사용:** 전원이 겹치는 시간이 없으면 그 주기는 건너뜀(용병 사용 등)
 - **동의 투표와 확정:** 전원이 동의한 후보 중에서 파티장이 최종 확정
 - **파티 간 충돌 방지:** 같은 사용자가 속한 다른 파티 일정과 겹치면 확정 거절
 - **미입력 경고:** 미입력 파티원에게 입력 요청, 파티장에게 "미입력 파티원이 존재합니다" 알림
 - **일정 변경 요청:** 확정 후에도 레이드 전날 23:59까지 요청 가능, 파티장 승인 시 재투표
-- **클리어 확인:** 앱에서 직접 기록하거나, 기록이 없으면 NEXON 스케줄러 API로 자동 확인
+- **클리어 확인:** 예정 시간이 지나면 앱이 결과를 물어 클리어·미클리어를 직접 기록, 기록이 없으면 NEXON 스케줄러 API로 자동 확인
 - **재조정:** 미클리어 시 잠가 둔 불가 시간으로 남은 기간 안에서 다시 추천
 - **분배금 정산:** 1인 분배금 등록, 수령 방법 채팅, `대기 → 지급함 → 수령 확인` 상태 관리
 
@@ -63,7 +64,7 @@
 | --- | --- | --- |
 | **1. 온보딩·파티 매핑** (처음 1회) | 1–4 | 로그인 → API Key 등록·캐릭터 불러오기 → 캐릭터 선택 → 고정 파티 개설·초대 |
 | **2. 주간 가용성·잠금** (매주 목요일 / 월간 보스는 매월 1일) | 5–7 | 시작 알림 → 불가 시간 입력 → 추천·동의 투표 → 파티장 확정 |
-| **3. 클리어 확인** | 8-1 | 앱 직접 기록 또는 매일 05:00 API 확인 |
+| **3. 클리어 확인** | 8-1 | 레이드 종료 후 앱에서 클리어·미클리어 직접 기록, 기록이 없으면 매일 05:00 API 확인 |
 | **4. 사후 처리** | 8-2, 9 | 미클리어 시 재조정, 클리어 시 분배금 정산 |
 
 ### 일정 상태
@@ -72,13 +73,16 @@
 stateDiagram-v2
     [*] --> OPEN: 주기 시작 (목 00:00 / 매월 1일)
     OPEN --> LOCKED: 전원 동의 후보를 파티장이 확정
+    OPEN --> SKIPPED: 전원이 겹치는 시간 없음 (그 주 미사용)
     LOCKED --> OPEN: 변경 요청 (전날 23:59까지, 파티장 승인)
     LOCKED --> VERIFYING: 예정 시각 경과
     VERIFYING --> SETTLED: 클리어
-    VERIFYING --> RETRY: 미클리어
+    VERIFYING --> RETRY: 미클리어, 남은 기간 있음
+    VERIFYING --> EXPIRED: 미클리어, 이미 마감 지남 (예: 수요일 레이드)
     RETRY --> LOCKED: 남은 기간 재투표 후 확정
     RETRY --> EXPIRED: 기한 초과 (주간 수 23:59 / 월간 말일 23:59)
     SETTLED --> [*]
+    SKIPPED --> [*]
     EXPIRED --> [*]
 ```
 
@@ -117,7 +121,7 @@ flowchart LR
 
 | 영역 | 기술 | 쓰임 |
 | --- | --- | --- |
-| 앱 | Kotlin, Android Studio | 화면과 입력 |
+| 앱 | Kotlin, Jetpack Compose, Android Studio | 화면과 입력 |
 | 인증 | Firebase Authentication | 이메일 회원가입·로그인 |
 | DB | Cloud Firestore | 실시간 동기화, 트랜잭션, 보안 규칙 |
 | 서버 | Cloud Functions (TypeScript) | callable 함수, 예약 실행, Firestore 트리거 |
@@ -141,12 +145,22 @@ flowchart LR
 
 ## 핵심 규칙
 
+**불가 시간 입력**
+- 파티원은 불가 시간을 체크한 뒤 **제출** 버튼을 눌러야 입력한 것으로 봅니다. 안 되는 시간이 없어도 제출합니다.
+- 입력 마감은 **주기 시작일 23:59**입니다(주간 보스는 목요일, 월간 보스는 1일).
+- 마감까지 제출하지 않은 파티원에게는 입력 요청을, 파티장에게는 미입력자 알림을 보냅니다. 고정 파티라 따로 연락할 수 있으므로 미입력자를 자동으로 제외하지는 않습니다.
+
+**추천 시간**
+- 전원이 제출하면 전원이 가능한 구간 중 보스 소요 시간 이상인 구간을 빠른 순으로 3개 추천합니다.
+- 파티원이 속한 **다른 파티의 확정 시간(`busy`)은 불가 시간과 똑같이** 먼저 제외합니다. 확정 트랜잭션의 충돌 검사는 그 뒤의 최종 방어선입니다.
+- 전원이 겹치는 구간이 하나도 없으면 그 주기는 **SKIPPED(그 주 미사용)**로 끝냅니다.
+
 **일정 확정**
-- 파티원은 추천 후보 3개마다 동의 여부를 투표합니다.
+- 파티원은 추천 후보 3개마다 동의 여부를 투표합니다. 자기 투표만 쓸 수 있고 다른 사람의 투표는 바꿀 수 없습니다.
 - 전원이 동의한 후보 중에서 파티장이 최종 확정합니다.
 
-**미입력 경고**
-- 불가 시간을 입력하지 않은 파티원에게는 입력 요청을, 파티장에게는 미입력자 알림을 보냅니다.
+**파티 구성 변경**
+- 가입, 탈퇴, 파티장 위임은 **주기가 시작하는 목요일(KST)에만** 할 수 있습니다. 검사는 Cloud Functions에서 합니다.
 
 **일정 변경 요청**
 - 확정(LOCKED) 후에도 **레이드 전날 23:59까지** 변경을 요청할 수 있습니다.
@@ -155,7 +169,9 @@ flowchart LR
 
 **클리어 확인**
 - 메이플스토리 보스는 파티 단위로 클리어됩니다. 따라서 결과는 클리어 / 미클리어 두 가지뿐입니다.
-- 사용자가 앱에서 클리어를 기록하면 즉시 클리어로 처리합니다.
+- 예정 시간이 지나면 앱이 파티원에게 레이드가 끝났는지 묻고, **클리어 또는 미클리어**를 직접 기록하게 합니다.
+- 클리어 기록은 즉시 SETTLED로, 미클리어 기록은 즉시 RETRY로 넘깁니다. 남은 기간이 없으면(예: 수요일 레이드) RETRY를 거치지 않고 EXPIRED가 됩니다.
+- RETRY에서는 이전 불가 시간을 기본값으로 쓰되 파티원이 고쳐서 다시 제출할 수 있습니다.
 - 기록이 없으면 매일 05:00에 스케줄러 API로 확인합니다. 이때 `date`는 **레이드 날짜**로 지정합니다(목요일 초기화 이후에도 수요일 레이드를 올바르게 확인하기 위함).
 
 **주기와 마감**
@@ -167,48 +183,61 @@ flowchart LR
 
 **분배금 정산**
 - 드롭 아이템을 판매한 파티원이 1인 분배금을 등록합니다(판매 금액은 넥슨 API에 없으므로 사용자 입력).
+- 한 일정에는 **판매자 1명, 금액 1건**만 담습니다. 판매한 금액 전체를 인원수로 나누기 때문입니다.
 - 받을 파티원은 채팅으로 수령 방법을 전달합니다.
 - 판매자 `지급함` → 받은 사람 `수령 확인`, 전원 수령 확인 시 정산 완료.
+- 확장 가능성: 경매장 수수료를 뺀 뒤 전원이 같은 금액을 받도록 계산하는 **분배금 계산**, 균등 분배가 아닌 **배율 조정**. 분배금을 파티원별 문서(`settlement/{uid}`)에 두는 것은 이 확장을 위한 구조입니다.
 
 ## 데이터 구조
 
 ```text
-users/{uid}                      프로필, 선택한 캐릭터, FCM 토큰
-  busy/{slotId}                  확정된 레이드 시간 (파티 간 충돌 검사용)
+users/{uid}                      프로필, 선택한 캐릭터, API Key 등록 여부
+  characters/{characterId}       캐릭터 기본 정보 캐시 (레벨, 직업, 이미지 / ocid 없음)
+  devices/{deviceId}             FCM 토큰 (본인만 접근)
+  busy/{slotId}                  확정된 레이드 시간, 30분 칸마다 한 문서 (파티 간 충돌 검사용)
 secrets/{uid}                    API Key, ocid  ← 앱 접근 차단, Functions만 읽음
 parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목록, 6자리 초대 코드
-  schedules/{periodId}           상태, 추천 후보, 투표, 확정 시각, 변경 요청
-    unavailable/{uid}            파티원별 불가 시간 (30분 칸)
-    clears/{uid}                 직접 기록한 클리어
+  schedules/{periodId}           상태, 추천 후보, 확정 시각, 변경 요청
+    unavailable/{uid}            파티원별 불가 시간 (30분 칸), 제출 여부
+    votes/{uid}                  파티원별 동의 투표 (본인만 쓰기)
+    clears/{uid}                 직접 기록한 클리어·미클리어
     settlement/{uid}             분배금, 대기·지급함·수령 확인 상태
     messages/{messageId}         정산 채팅
 ```
 
-**확정 트랜잭션:** 파티장이 확정하면 하나의 트랜잭션 안에서 ① 일정이 아직 OPEN인지, ② 파티원 전원의 `busy` 문서에 겹치는 시간이 없는지 확인한 뒤 LOCKED로 바꾸고 `busy`에 시간을 기록합니다. 같은 사용자가 속한 두 파티가 동시에 확정하면 나중 트랜잭션이 재실행되어 충돌로 거절됩니다. 충돌 단위는 캐릭터가 아니라 **사용자(uid)**입니다.
+**확정 트랜잭션:** 파티장이 확정하면 하나의 트랜잭션 안에서 ① 일정이 아직 OPEN인지, ② 파티원 전원의 `busy` 문서에 겹치는 시간이 없는지 확인한 뒤 LOCKED로 바꾸고 `busy`에 시간을 기록합니다. 같은 사용자가 속한 두 파티가 동시에 확정하면 나중 트랜잭션이 재실행되어 충돌로 거절됩니다. 충돌 단위는 캐릭터가 아니라 **사용자(uid)**입니다. `busy`의 `slotId`는 30분 칸마다 고정된 값(예: `20261112-2030`)이라, 같은 칸을 두 번 만들려는 시도가 문서 단위로 걸립니다.
+
+**캐릭터 ID:** 앱은 캐릭터를 ocid 대신 ocid의 해시(`characterId`)로 가리킵니다. ocid는 `secrets/{uid}`에만 있습니다.
 
 ## Cloud Functions
 
 | 종류 | 함수 | 역할 |
 | --- | --- | --- |
 | callable | `registerApiKey` | 키 유효성 확인, `secrets`에 저장, 캐릭터 목록 반환 |
+| callable | `listCharacters` | 저장된 캐릭터 목록 반환, 30일이 지났으면 다시 받아 옴 |
 | callable | `getCharacterInfo` | 캐릭터 기본 정보 조회·캐시 |
-| callable | `joinParty` | 초대 코드 확인 후 파티원 추가 |
+| callable | `createParty` | 파티 개설, 6자리 초대 코드 발급 |
+| callable | `joinParty` / `leaveParty` / `delegateLeader` | 가입·탈퇴·파티장 위임 (목요일에만 허용) |
 | callable | `confirmSchedule` | 파티장 확정, 파티 간 충돌 검사 트랜잭션 |
 | callable | `requestChange` / `approveChange` | 전날 23:59 마감 검사, 승인 시 확정 해제 |
 | scheduled | `weeklyOpen` (목 00:00) | 주간 일정 생성, 시작 알림, 지난 RETRY 만료 처리 |
 | scheduled | `monthlyOpen` (매월 1일 00:00) | 월간 일정 생성, 시작 알림, 지난달 RETRY 만료 처리 |
 | scheduled | `dailyClearCheck` (05:00) | 기록 없는 일정 클리어 확인, 30일 지난 캐시 갱신 |
-| trigger | `onUnavailableWrite` | 미입력 경고, 전원 입력 시 추천 후보 계산 |
+| scheduled | `inputDeadlineCheck` (매일 00:00) | 입력 마감이 지난 일정의 미입력 경고 |
+| trigger | `onUnavailableWrite` | 전원 제출 시 추천 후보 계산(다른 파티 확정 시간 제외), 겹치는 시간이 없으면 SKIPPED |
+| trigger | `onClearWrite` | 직접 기록한 클리어·미클리어 반영 (SETTLED / RETRY / EXPIRED) |
+| callable | `registerSettlement` / `markPaid` / `confirmReceived` | 분배금 등록, 지급함, 수령 확인 |
 | trigger | `onScheduleStateChange` | 확정·변경·클리어·재조정 알림 |
 | trigger | `onSettlementWrite` | 지급·수령 알림, 전원 확인 시 정산 완료 |
 
-모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다.
+모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 지금 구현된 함수는 `registerApiKey`, `listCharacters`, `getCharacterInfo`이고 나머지는 아래 개발 일정에 따라 추가합니다.
 
 ## 보안
 
 - API Key와 ocid는 `secrets` 컬렉션에만 저장하고, Firestore 보안 규칙으로 클라이언트 접근을 막습니다.
 - 넥슨 API 호출은 Cloud Functions에서만 합니다. 키와 ocid를 로그·URL·화면에 남기지 않습니다.
-- 파티 문서는 해당 파티원만 읽고 쓸 수 있습니다.
+- 파티·일정 문서는 해당 파티원만 읽을 수 있습니다. 파티 구성, 일정 상태, 추천 후보, 확정 시각, 정산 상태는 Cloud Functions만 씁니다.
+- 클라이언트가 직접 쓰는 것은 자기 프로필, 자기 불가 시간, 자기 투표, 자기 클리어 기록, 채팅뿐입니다.
 - 마감 시각, 파티장 권한 같은 검사는 서버에서 합니다.
 
 ## 개발 일정
@@ -231,7 +260,7 @@ parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목
 
 **요구 사항**
 - Android Studio (최신 안정 버전), JDK 17
-- Node.js 20, Firebase CLI
+- Node.js 22 (Firebase CLI는 `functions`의 개발 의존성에 포함)
 - Firebase 프로젝트 (Cloud Functions 사용을 위해 Blaze 요금제)
 - [NEXON Open API](https://openapi.nexon.com) 개발자 API Key
 
@@ -243,11 +272,32 @@ parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목
    ```bash
    cd functions
    npm install
-   firebase deploy --only functions,firestore:rules
+   npx firebase login
+   npx firebase deploy --project <프로젝트 ID> --only functions,firestore:rules
    ```
 5. Android Studio에서 앱을 빌드해 실행하고, 앱 안에서 본인의 NEXON API Key를 등록합니다.
 
 > `google-services.json`과 API Key는 저장소에 커밋하지 마세요.
+
+**폴더 구조**
+
+```text
+app/                 Android 앱 (Kotlin, Jetpack Compose)
+functions/           Cloud Functions (TypeScript)
+  src/nexon/         NEXON Open API 클라이언트 (재시도, 에러 분류)
+  src/callable/      callable 함수
+  test/unit/         단위 테스트
+  test/rules/        Firestore 보안 규칙 테스트 (에뮬레이터)
+firestore.rules      Firestore 보안 규칙
+```
+
+**테스트**
+
+```bash
+cd functions
+npm test             # 단위 테스트
+npm run test:rules   # 보안 규칙 테스트 (Firestore 에뮬레이터, Java 필요)
+```
 
 ## 출처
 
