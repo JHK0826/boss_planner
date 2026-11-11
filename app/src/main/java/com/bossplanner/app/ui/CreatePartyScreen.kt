@@ -43,14 +43,15 @@ fun CreatePartyScreen(
     parties: PartyRepository = remember { PartyRepository() },
 ) {
     var name by rememberSaveable { mutableStateOf("") }
-    var bossName by rememberSaveable { mutableStateOf(Bosses.names.first()) }
+    var bossName by rememberSaveable { mutableStateOf("스우") }
     var difficulty by rememberSaveable { mutableStateOf("HARD") }
     var durationMinutes by rememberSaveable { mutableIntStateOf(60) }
     var characterId by rememberSaveable { mutableStateOf(characters.firstOrNull()?.id) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val cycle = Bosses.cycleOf(bossName)
+    val boss = Bosses.find(bossName)
+    val cycle = if (boss.monthly) "MONTHLY" else "WEEKLY"
 
     BackHandler(enabled = !busy, onBack = onBack)
 
@@ -70,8 +71,16 @@ fun CreatePartyScreen(
 
         Text("보스", style = MaterialTheme.typography.titleSmall)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Bosses.names.forEach { boss ->
-                FilterChip(selected = boss == bossName, onClick = { bossName = boss }, label = { Text(boss) })
+            Bosses.all.forEach { item ->
+                FilterChip(
+                    selected = item.name == bossName,
+                    onClick = {
+                        bossName = item.name
+                        // 보스마다 있는 난이도가 다르다.
+                        if (difficulty !in item.difficulties) difficulty = item.difficulties.last()
+                    },
+                    label = { Text(item.name) },
+                )
             }
         }
         Text(
@@ -81,8 +90,12 @@ fun CreatePartyScreen(
 
         Text("난이도", style = MaterialTheme.typography.titleSmall)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Bosses.difficulties.forEach { (code, label) ->
-                FilterChip(selected = code == difficulty, onClick = { difficulty = code }, label = { Text(label) })
+            boss.difficulties.forEach { code ->
+                FilterChip(
+                    selected = code == difficulty,
+                    onClick = { difficulty = code },
+                    label = { Text(Bosses.difficultyLabel(code)) },
+                )
             }
         }
 

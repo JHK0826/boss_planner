@@ -39,23 +39,75 @@ data class Schedule(
     /** 전원이 동의한 후보 번호 */
     val unanimous: List<Int>,
     val skippedReason: String?,
+    /** 확정된 레이드 시간. 확정 전이면 null */
+    val confirmed: Confirmed?,
+    val changeRequest: ChangeRequest?,
+    val retryCount: Int,
+    val expiredReason: String?,
+) {
+    /** 불가 시간 입력·투표·확정을 받는 상태 (처음 조율 또는 미클리어 후 재조정) */
+    val acceptsInput: Boolean get() = state == "OPEN" || state == "RETRY"
+}
+
+data class Confirmed(val startMs: Long, val endMs: Long)
+
+data class ChangeRequest(val requestedBy: String, val reason: String, val status: String) {
+    val isPending: Boolean get() = status == "PENDING"
+}
+
+/** 내 확정 일정 한 건 (여러 파티에 걸친 주간 시간표용) */
+data class Raid(
+    val partyId: String,
+    val partyName: String,
+    val bossName: String,
+    val difficulty: String,
+    val startMs: Long,
+    val endMs: Long,
 )
 
 data class Unavailable(val slots: List<String>, val submitted: Boolean)
 
 data class Vote(val agreed: List<Int>, val round: Int)
 
-/** 보스 목록. 월간 보스만 따로 표시하고 나머지는 주간이다. */
+data class Boss(val name: String, val difficulties: List<String>, val monthly: Boolean = false)
+
+/**
+ * 주간·월간 보스 목록. 이름과 난이도는 NEXON 스케줄러 API의 boss_contents 값과 같아야
+ * 05:00 자동 클리어 확인이 된다 (2026-11 기준 API 응답에서 가져옴).
+ */
 object Bosses {
-    val names = listOf(
-        "스우", "데미안", "가디언 엔젤 슬라임", "루시드", "윌", "더스크", "진 힐라", "듄켈",
-        "선택받은 세렌", "감시자 칼로스", "최초의 대적자", "카링", "림보", "발드릭스", "검은 마법사",
+    val all = listOf(
+        Boss("자쿰", listOf("CHAOS")),
+        Boss("매그너스", listOf("HARD")),
+        Boss("파풀라투스", listOf("CHAOS")),
+        Boss("피에르", listOf("CHAOS")),
+        Boss("반반", listOf("CHAOS")),
+        Boss("블러디퀸", listOf("CHAOS")),
+        Boss("벨룸", listOf("CHAOS")),
+        Boss("스우", listOf("NORMAL", "HARD", "EXTREME")),
+        Boss("데미안", listOf("NORMAL", "HARD")),
+        Boss("가디언 엔젤 슬라임", listOf("NORMAL", "CHAOS")),
+        Boss("루시드", listOf("EASY", "NORMAL", "HARD")),
+        Boss("윌", listOf("EASY", "NORMAL", "HARD")),
+        Boss("더스크", listOf("NORMAL", "CHAOS")),
+        Boss("진 힐라", listOf("NORMAL", "HARD")),
+        Boss("듄켈", listOf("NORMAL", "HARD")),
+        Boss("검은 마법사", listOf("HARD", "EXTREME"), monthly = true),
+        Boss("선택받은 세렌", listOf("NORMAL", "HARD", "EXTREME")),
+        Boss("감시자 칼로스", listOf("EASY", "NORMAL", "CHAOS", "EXTREME")),
+        Boss("카링", listOf("EASY", "NORMAL", "HARD", "EXTREME")),
+        Boss("림보", listOf("NORMAL", "HARD", "EXTREME")),
+        Boss("발드릭스", listOf("NORMAL", "HARD", "EXTREME")),
+        Boss("최초의 대적자", listOf("EASY", "NORMAL", "HARD", "EXTREME")),
+        Boss("찬란한 흉성", listOf("NORMAL", "HARD")),
+        Boss("유피테르", listOf("NORMAL", "HARD")),
+        Boss("시즌 보스 메이린", listOf("NORMAL", "HARD")),
+        Boss("벨로나", listOf("EASY", "NORMAL", "HARD")),
     )
-    private val monthly = setOf("검은 마법사")
 
-    fun cycleOf(bossName: String): String = if (bossName in monthly) "MONTHLY" else "WEEKLY"
+    fun find(name: String): Boss = all.firstOrNull { it.name == name } ?: all.first()
 
-    val difficulties = listOf(
+    private val labels = mapOf(
         "EASY" to "이지",
         "NORMAL" to "노멀",
         "HARD" to "하드",
@@ -63,5 +115,5 @@ object Bosses {
         "EXTREME" to "익스트림",
     )
 
-    fun difficultyLabel(code: String): String = difficulties.firstOrNull { it.first == code }?.second ?: code
+    fun difficultyLabel(code: String): String = labels[code] ?: code
 }

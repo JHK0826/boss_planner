@@ -34,6 +34,7 @@ fun MainScreen(
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var characters by remember { mutableStateOf<List<CharacterInfo>>(emptyList()) }
     val parties by remember(uid) { partyRepository.myParties(uid) }.collectAsStateWithLifecycle(emptyList())
+    val raids by remember(uid) { partyRepository.myRaids(uid) }.collectAsStateWithLifecycle(emptyList())
 
     LaunchedEffect(uid, profile.selectedCharacterIds) {
         characters = try {
@@ -48,6 +49,7 @@ fun MainScreen(
             profile = profile,
             characters = characters,
             parties = parties,
+            raids = raids,
             onOpenParty = { screen = Screen.PartyDetail(it) },
             onCreateParty = { screen = Screen.CreateParty },
             onJoinParty = { screen = Screen.JoinParty },

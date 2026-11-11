@@ -18,12 +18,14 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bossplanner.app.data.Bosses
+import com.bossplanner.app.data.Confirmed
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
@@ -41,6 +44,7 @@ import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.Unavailable
 import com.bossplanner.app.data.Vote
 import com.bossplanner.app.data.userMessage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -51,6 +55,9 @@ private data class Loaded<T>(val value: T)
 private sealed interface Confirm {
     data object Leave : Confirm
     data class Delegate(val member: PartyMember) : Confirm
+    data class Lock(val index: Int, val label: String) : Confirm
+    data class Record(val cleared: Boolean) : Confirm
+    data object RequestChange : Confirm
 }
 
 @Composable
@@ -106,7 +113,14 @@ fun PartyScreen(
     }
 
     val isLeader = party.leaderUid == uid
-    val inputOpen = schedule?.state == "OPEN"
+    val inputOpen = schedule?.acceptsInput == true
+    // 화면 표시용 시각. 마감·권한 검사는 서버가 서버 시각으로 한다.
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000)
+            value = System.currentTimeMillis()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -156,8 +170,13 @@ fun PartyScreen(
             submittedCount = party.memberUids.count { unavailable[it]?.submitted == true },
             votes = votes,
             myVote = votes[uid],
+            isLeader = isLeader,
+            uid = uid,
+            now = now,
             busy = busy,
             onVote = { agreed, round -> run { parties.setVote(partyId, schedule!!.id, uid, agreed, round) } },
+            onAsk = { confirm = it },
+            onRespondToChange = { approve -> run { parties.respondToChange(partyId, schedule!!.id, approve) } },
         )
         if (inputOpen && schedule != null) {
             OutlinedButton(
@@ -185,6 +204,60 @@ fun PartyScreen(
 
     when (val current = confirm) {
         null -> Unit
+        is Confirm.Lock -> AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("일정 확정") },
+            text = { Text("${current.label}로 확정할까요? 파티원이 속한 다른 파티 일정과 겹치면 확정되지 않습니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    run { parties.confirmSchedule(partyId, schedule!!.id, current.index) }
+                }) { Text("확정") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+        )
+        is Confirm.Record -> AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text(if (current.cleared) "클리어 기록" else "미클리어 기록") },
+            text = {
+                Text(
+                    if (current.cleared) "클리어로 기록하면 일정이 완료 처리됩니다. 되돌릴 수 없습니다."
+                    else "미클리어로 기록하면 확정 시간이 풀리고 남은 기간 안에서 다시 조율합니다. 되돌릴 수 없습니다.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    run { parties.recordClear(partyId, schedule!!.id, uid, current.cleared) }
+                }) { Text("기록") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+        )
+        Confirm.RequestChange -> {
+            var reason by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { confirm = null },
+                title = { Text("일정 변경 요청") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("파티장이 승인하면 확정이 풀리고 다시 조율합니다. 승인 후 불가 시간을 고쳐 다시 제출해 주세요.")
+                        OutlinedTextField(
+                            value = reason,
+                            onValueChange = { reason = it.take(200) },
+                            label = { Text("사유 (선택)") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirm = null
+                        run { parties.requestChange(partyId, schedule!!.id, reason.trim()) }
+                    }) { Text("요청") }
+                },
+                dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+            )
+        }
         Confirm.Leave -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("파티 탈퇴") },
@@ -221,7 +294,7 @@ private fun PartyMember.label(): String = displayName.ifBlank { characterName }
 
 /** 파티원 옆에 붙이는 진행 상태 */
 private fun memberStatus(schedule: Schedule?, unavailable: Unavailable?, vote: Vote?): String? = when {
-    schedule == null || schedule.state != "OPEN" -> null
+    schedule == null || !schedule.acceptsInput -> null
     unavailable?.submitted != true -> "미입력"
     schedule.candidates.isEmpty() -> "제출 완료"
     vote?.round == schedule.round -> "투표 완료"
@@ -259,37 +332,142 @@ private fun ScheduleSection(
     submittedCount: Int,
     votes: Map<String, Vote>,
     myVote: Vote?,
+    isLeader: Boolean,
+    uid: String,
+    now: Long,
     busy: Boolean,
     onVote: (agreed: List<Int>, round: Int) -> Unit,
+    onAsk: (Confirm) -> Unit,
+    onRespondToChange: (approve: Boolean) -> Unit,
 ) {
     val memberCount = party.memberUids.size
-    when {
-        loading -> CircularProgressIndicator()
-        schedule == null -> Text(
-            "아직 시작된 주기가 없습니다. 다음 ${if (party.isWeekly) "목요일" else "달 1일"} 00:00에 첫 일정이 열립니다.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        schedule.state == "SKIPPED" -> Text(
-            if (schedule.skippedReason == "NO_AGREEMENT") {
-                "전원이 동의한 시간이 없어 이번 주기는 진행하지 않습니다."
-            } else {
-                "전원이 겹치는 시간이 없어 이번 주기는 진행하지 않습니다."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        schedule.state != "OPEN" -> Text("일정이 확정되었습니다.", style = MaterialTheme.typography.bodyMedium)
-        schedule.candidates.isEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                "불가 시간 제출 $submittedCount/${memberCount}명 · 마감 ${TimeSlots.dateTime(schedule.inputDeadlineMs - 60_000)}",
+    val confirmed = schedule?.confirmed
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when {
+            loading -> CircularProgressIndicator()
+            schedule == null -> Text(
+                "아직 시작된 주기가 없습니다. 다음 ${if (party.isWeekly) "목요일" else "달 1일"} 00:00에 첫 일정이 열립니다.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Text(
-                if (myUnavailable?.submitted == true) "전원이 제출하면 추천 시간이 나옵니다."
-                else "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요.",
-                style = MaterialTheme.typography.bodySmall,
+            schedule.state == "SKIPPED" -> Text(
+                when (schedule.skippedReason) {
+                    "NO_AGREEMENT" -> "전원이 동의한 시간이 없어 이번 주기는 진행하지 않습니다."
+                    "PERIOD_ENDED" -> "일정을 확정하지 못한 채 주기가 끝났습니다."
+                    else -> "전원이 겹치는 시간이 없어 이번 주기는 진행하지 않습니다."
+                },
+                style = MaterialTheme.typography.bodyMedium,
             )
+            schedule.state == "SETTLED" -> Text(
+                "클리어 완료" + (confirmed?.let { " · ${TimeSlots.range(it.startMs, it.endMs)}" } ?: ""),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            schedule.state == "EXPIRED" -> Text(
+                when (schedule.expiredReason) {
+                    "NOT_CLEARED" -> "미클리어로 끝났고 다시 잡을 기간이 남지 않았습니다."
+                    "UNVERIFIED" -> "클리어 여부를 확인하지 못한 채 주기가 끝났습니다."
+                    else -> "다시 잡을 수 있는 시간이 없어 이번 주기는 종료되었습니다."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            (schedule.state == "LOCKED" || schedule.state == "VERIFYING") && confirmed != null ->
+                LockedSchedule(schedule, confirmed, party, isLeader, uid, now, busy, onAsk, onRespondToChange)
+            else -> {
+                if (schedule.state == "RETRY") {
+                    Text(
+                        "미클리어로 재조정 중입니다 (${schedule.retryCount}번째). 이전 불가 시간으로 다시 추천합니다. 필요하면 불가 시간을 고쳐 주세요.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (schedule.candidates.isEmpty()) {
+                    Text(
+                        "불가 시간 제출 $submittedCount/${memberCount}명" +
+                            if (schedule.state == "OPEN") " · 마감 ${TimeSlots.dateTime(schedule.inputDeadlineMs - 60_000)}" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        if (myUnavailable?.submitted == true) "전원이 제출하면 추천 시간이 나옵니다."
+                        else "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    CandidateVoting(schedule, memberCount, votes, myVote, isLeader, busy, onVote, onAsk)
+                }
+            }
         }
-        else -> CandidateVoting(schedule, memberCount, votes, myVote, busy, onVote)
+    }
+}
+
+/** 확정된 일정: 시작 전에는 변경 요청, 시작 후에는 결과 기록 */
+@Composable
+private fun LockedSchedule(
+    schedule: Schedule,
+    confirmed: Confirmed,
+    party: Party,
+    isLeader: Boolean,
+    uid: String,
+    now: Long,
+    busy: Boolean,
+    onAsk: (Confirm) -> Unit,
+    onRespondToChange: (approve: Boolean) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("확정된 시간", style = MaterialTheme.typography.labelMedium)
+            Text(TimeSlots.range(confirmed.startMs, confirmed.endMs), style = MaterialTheme.typography.titleLarge)
+        }
+    }
+
+    if (now >= confirmed.startMs) {
+        Text(
+            if (now >= confirmed.endMs) "레이드가 끝났나요? 결과를 기록해 주세요." else "레이드 진행 중입니다. 끝나면 결과를 기록해 주세요.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = !busy, modifier = Modifier.weight(1f), onClick = { onAsk(Confirm.Record(cleared = true)) }) {
+                Text("클리어")
+            }
+            OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f), onClick = { onAsk(Confirm.Record(cleared = false)) }) {
+                Text("미클리어")
+            }
+        }
+        Text("기록하지 않으면 다음 날 05:00에 자동으로 확인합니다.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+
+    val request = schedule.changeRequest
+    if (request != null && request.isPending) {
+        val requester = party.members[request.requestedBy]?.label() ?: "파티원"
+        Text(
+            "$requester 님이 일정 변경을 요청했습니다." + if (request.reason.isNotBlank()) "\n사유: ${request.reason}" else "",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (isLeader) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(enabled = !busy, modifier = Modifier.weight(1f), onClick = { onRespondToChange(true) }) { Text("승인") }
+                OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f), onClick = { onRespondToChange(false) }) {
+                    Text("거절")
+                }
+            }
+        } else {
+            Text("파티장의 승인을 기다립니다.", style = MaterialTheme.typography.bodySmall)
+        }
+        return
+    }
+
+    if (request?.status == "REJECTED" && request.requestedBy == uid) {
+        Text("변경 요청이 거절되었습니다.", style = MaterialTheme.typography.bodySmall)
+    }
+    // 변경 요청은 레이드 전날 23:59까지
+    val deadline = TimeSlots.startOfDay(confirmed.startMs)
+    if (now < deadline) {
+        OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.RequestChange) }) {
+            Text("일정 변경 요청")
+        }
+        Text("변경 요청 마감: ${TimeSlots.dateTime(deadline - 60_000)}", style = MaterialTheme.typography.bodySmall)
+    } else {
+        Text("변경 요청 기간(레이드 전날 23:59까지)이 지났습니다.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -299,8 +477,10 @@ private fun CandidateVoting(
     memberCount: Int,
     votes: Map<String, Vote>,
     myVote: Vote?,
+    isLeader: Boolean,
     busy: Boolean,
     onVote: (agreed: List<Int>, round: Int) -> Unit,
+    onAsk: (Confirm) -> Unit,
 ) {
     val savedVote = myVote?.takeIf { it.round == schedule.round }
     // 후보가 바뀌면(round) 선택을 처음부터 다시 한다.
@@ -314,6 +494,8 @@ private fun CandidateVoting(
         )
         schedule.candidates.forEachIndexed { index, candidate ->
             val checked = index in selected
+            val unanimous = index in schedule.unanimous
+            val label = TimeSlots.range(candidate.startMs, candidate.endMs)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -322,19 +504,20 @@ private fun CandidateVoting(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(checked = checked, onCheckedChange = null)
-                Column(modifier = Modifier.padding(start = 12.dp)) {
-                    Text(TimeSlots.range(candidate.startMs, candidate.endMs), style = MaterialTheme.typography.titleSmall)
+                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(label, style = MaterialTheme.typography.titleSmall)
                     Text(
-                        if (index in schedule.unanimous) "전원 동의"
-                        else "동의 ${currentVotes.count { index in it.agreed }}/${memberCount}명",
+                        if (unanimous) "전원 동의" else "동의 ${currentVotes.count { index in it.agreed }}/${memberCount}명",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (index in schedule.unanimous) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (unanimous) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                if (unanimous && isLeader) {
+                    Button(enabled = !busy, onClick = { onAsk(Confirm.Lock(index, label)) }) { Text("확정") }
                 }
             }
         }
-        Button(
+        OutlinedButton(
             enabled = !busy && (savedVote == null || savedVote.agreed.toSet() != selected),
             modifier = Modifier.fillMaxWidth(),
             onClick = { onVote(selected.toList(), schedule.round) },
@@ -349,6 +532,7 @@ private fun CandidateVoting(
         }
         Text(
             when {
+                schedule.unanimous.isNotEmpty() && isLeader -> "전원이 동의한 시간 중 하나를 확정해 주세요."
                 schedule.unanimous.isNotEmpty() -> "전원이 동의한 시간이 있습니다. 파티장의 확정을 기다립니다."
                 currentVotes.size < memberCount -> "투표 ${currentVotes.size}/${memberCount}명. 전원이 투표했는데 전원 동의가 없으면 다음 후보로 넘어갑니다."
                 else -> ""

@@ -140,6 +140,9 @@ flowchart LR
 - 호스트 `https://open.api.nexon.com`, 인증 헤더 `x-nxopen-api-key`, GET · JSON
 - 본인 계정의 캐릭터만 조회할 수 있으므로 **파티원마다 자기 API Key를 등록**합니다.
 - 게임 데이터는 평균 약 15분 뒤에 반영됩니다.
+- 스케줄러 API의 `date`(KST `YYYY-MM-DD`)는 그 날짜 기준 상태를 돌려주며, **최근 약 7일**까지만 조회됩니다. 더 오래된 날짜나 미래 날짜는 `OPENAPI00004`(400)입니다.
+- `boss_contents` 항목은 `content_name`(보스 이름), `difficulty`(`easy`·`normal`·`hard`·`chaos`·`extreme`), `cycle`(`bossDaily`·`bossWeekly`·`bossMonthly`), `complete_flag`(문자열 `"true"`·`"false"`)입니다. 파티의 보스 이름·난이도가 이 값과 같아야 자동 확인이 됩니다. 앱의 보스 목록은 이 응답에서 가져왔습니다.
+- 위 세 엔드포인트의 응답 형식은 실제 API Key로 호출해 확인했습니다(2026-11).
 - 개발 단계 호출 한도는 하루 1,000건입니다. 응답을 Firestore에 캐시해 중복 호출을 줄입니다.
 - 재시도는 429, 5xx, 점검 중 코드에만 지수 백오프로 합니다.
 
@@ -160,7 +163,8 @@ flowchart LR
 
 **일정 확정**
 - 파티원은 추천 후보 3개마다 동의 여부를 투표합니다. 자기 투표만 쓸 수 있고 다른 사람의 투표는 바꿀 수 없습니다.
-- 전원이 동의한 후보 중에서 파티장이 최종 확정합니다.
+- 전원이 동의한 후보 중에서 파티장이 최종 확정합니다. 이미 지난 시간은 확정할 수 없습니다.
+- 확정하는 순간 파티원 전원의 다른 파티 확정 시간과 겹치는지 다시 검사하고, 겹치면 누구의 일정과 겹치는지 알려 주며 거절합니다.
 
 **파티 구성 변경**
 - 가입, 탈퇴, 파티장 위임은 **주기 시작일(KST)에만** 할 수 있습니다. 주간 보스 파티는 목요일, 월간 보스 파티는 매월 1일입니다. 검사는 Cloud Functions에서 서버 시각으로 합니다.
@@ -170,15 +174,21 @@ flowchart LR
 
 **일정 변경 요청**
 - 확정(LOCKED) 후에도 **레이드 전날 23:59까지** 변경을 요청할 수 있습니다.
-- 파티장이 승인하면 확정 시간을 해제하고 OPEN으로 돌아가 남은 기간 안에서 재투표합니다.
+- 파티장이 승인하면 확정 시간을 해제하고 OPEN으로 돌아가 남은 기간 안에서 재투표합니다. 승인은 레이드 시작 전까지 할 수 있습니다.
+- 승인되면 **요청한 사람은 불가 시간을 다시 제출**해야 새 추천이 나옵니다. 그대로 두면 같은 시간이 다시 추천되기 때문입니다.
+- 처리 대기 중인 요청은 일정마다 하나만 둘 수 있습니다. 파티장은 거절할 수도 있습니다.
 - 마감 검사는 기기 시계 조작으로 우회할 수 없도록 Cloud Functions에서 합니다.
 
 **클리어 확인**
 - 메이플스토리 보스는 파티 단위로 클리어됩니다. 따라서 결과는 클리어 / 미클리어 두 가지뿐입니다.
-- 예정 시간이 지나면 앱이 파티원에게 레이드가 끝났는지 묻고, **클리어 또는 미클리어**를 직접 기록하게 합니다.
-- 클리어 기록은 즉시 SETTLED로, 미클리어 기록은 즉시 RETRY로 넘깁니다. 남은 기간이 없으면(예: 수요일 레이드) RETRY를 거치지 않고 EXPIRED가 됩니다.
-- RETRY에서는 이전 불가 시간을 기본값으로 쓰되 파티원이 고쳐서 다시 제출할 수 있습니다.
+- 레이드 시작 시각이 지나면 앱이 파티원에게 결과를 묻고, **클리어 또는 미클리어**를 직접 기록하게 합니다. 시작 전에는 기록할 수 없습니다.
+- 파티원 누구든 먼저 남긴 기록이 바로 반영됩니다. 클리어 기록은 즉시 SETTLED로, 미클리어 기록은 즉시 RETRY로 넘깁니다. 남은 기간이 없으면(예: 수요일 레이드) RETRY를 거치지 않고 EXPIRED가 됩니다.
+- RETRY에서는 확정 시간을 풀고, 이전 불가 시간으로 남은 기간 안에서 바로 다시 추천합니다. 파티원은 불가 시간을 고쳐서 다시 제출할 수 있습니다. 이후 투표와 확정 절차는 처음과 같습니다.
+- RETRY에서 더 잡을 수 있는 시간이 없으면 EXPIRED로 끝냅니다.
+- 예정 시각이 지난 LOCKED 일정은 30분마다 도는 정리 함수가 VERIFYING으로 바꿉니다.
 - 기록이 없으면 매일 05:00에 스케줄러 API로 확인합니다. 이때 `date`는 **레이드 날짜**로 지정합니다(목요일 초기화 이후에도 수요일 레이드를 올바르게 확인하기 위함).
+- 파티원들의 API Key로 차례로 조회해 **한 명이라도 클리어로 나오면 클리어**, 확인된 사람이 모두 미클리어면 미클리어로 봅니다. 키 만료나 점검으로 아무도 확인하지 못하면 VERIFYING에 두고 다음 날 다시 확인하며, 주기가 끝나고 이틀이 지나도 확인하지 못하면 EXPIRED로 끝냅니다.
+- 일정을 확정하지 못한 채 주기가 끝나면 OPEN은 SKIPPED로, RETRY는 EXPIRED로 끝냅니다.
 
 **주기와 마감**
 
@@ -200,7 +210,7 @@ flowchart LR
 users/{uid}                      프로필, 선택한 캐릭터, API Key 등록 여부
   characters/{characterId}       캐릭터 기본 정보 캐시 (레벨, 직업, 이미지 / ocid 없음)
   devices/{deviceId}             FCM 토큰 (본인만 접근)
-  busy/{slotId}                  확정된 레이드 시간, 30분 칸마다 한 문서 (파티 간 충돌 검사용)
+  busy/{slotId}                  확정된 레이드 시간, 30분 칸마다 한 문서 (파티 간 충돌 검사, 내 시간표 표시)
 secrets/{uid}                    API Key, ocid  ← 앱 접근 차단, Functions만 읽음
 parties/{partyId}                보스, 난이도, 주기, 소요 시간, 파티장, 파티원 uid 목록·캐릭터, 6자리 초대 코드
   schedules/{periodId}           상태, 추천 후보, 후보 라운드, 전원 동의 후보, 확정 시각, 변경 요청
@@ -234,6 +244,7 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 | scheduled | `weeklyOpen` (목 00:00) | 주간 일정 생성, 시작 알림, 지난 RETRY 만료 처리 |
 | scheduled | `monthlyOpen` (매월 1일 00:00) | 월간 일정 생성, 시작 알림, 지난달 RETRY 만료 처리 |
 | scheduled | `dailyClearCheck` (05:00) | 기록 없는 일정 클리어 확인, 30일 지난 캐시 갱신 |
+| scheduled | `scheduleSweep` (30분마다) | 예정 시각이 지난 일정을 VERIFYING으로, 주기가 끝난 미확정 일정을 종료로 |
 | scheduled | `inputDeadlineCheck` (매일 00:00) | 입력 마감이 지난 일정의 미입력 경고 |
 | trigger | `onUnavailableWrite` | 전원 제출 시 추천 후보 계산(다른 파티 확정 시간 제외), 겹치는 시간이 없으면 SKIPPED |
 | trigger | `onVoteWrite` | 전원 동의 후보 갱신, 전원이 투표했는데 동의가 없으면 다음 후보 또는 SKIPPED |
@@ -242,7 +253,7 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 | trigger | `onScheduleStateChange` | 확정·변경·클리어·재조정 알림 |
 | trigger | `onSettlementWrite` | 지급·수령 알림, 전원 확인 시 정산 완료 |
 
-모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 지금 구현된 함수는 `registerApiKey`, `listCharacters`, `getCharacterInfo`, `createParty`, `joinParty`, `leaveParty`, `delegateLeader`, `onUnavailableWrite`, `onVoteWrite`, `weeklyOpen`, `monthlyOpen`입니다. `weeklyOpen`과 `monthlyOpen`은 아직 일정 생성만 하고, 알림과 만료 처리는 아래 개발 일정에 따라 추가합니다.
+모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 아직 구현되지 않은 것은 `registerSettlement` / `markPaid` / `confirmReceived`, `onScheduleStateChange`, `onSettlementWrite`, `inputDeadlineCheck`와 모든 푸시 알림입니다(4주차). `weeklyOpen`과 `monthlyOpen`은 일정 생성과 지난 주기 정리까지 합니다.
 
 ## 보안
 
@@ -280,12 +291,12 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 1. 저장소를 클론합니다.
 2. Firebase 콘솔에서 Android 앱을 등록하고 `google-services.json`을 `app/`에 넣습니다.
 3. Authentication(이메일), Firestore, Cloud Messaging을 활성화합니다. Firestore 위치는 Functions와 같은 `asia-northeast3`(서울)로 만듭니다.
-4. Functions를 배포합니다.
+4. Functions와 보안 규칙, 인덱스를 배포합니다.
    ```bash
    cd functions
    npm install
    npx firebase login
-   npx firebase deploy --project <프로젝트 ID> --only functions,firestore:rules
+   npx firebase deploy --project <프로젝트 ID> --only functions,firestore
    ```
 5. Android Studio에서 앱을 빌드해 실행하고, 앱 안에서 본인의 NEXON API Key를 등록합니다.
 

@@ -24,6 +24,8 @@ import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
 import com.bossplanner.app.data.CharacterInfo
 import com.bossplanner.app.data.Party
+import com.bossplanner.app.data.Raid
+import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.UserProfile
 
 @Composable
@@ -31,6 +33,7 @@ fun HomeScreen(
     profile: UserProfile,
     characters: List<CharacterInfo>,
     parties: List<Party>,
+    raids: List<Raid>,
     onOpenParty: (partyId: String) -> Unit,
     onCreateParty: () -> Unit,
     onJoinParty: () -> Unit,
@@ -48,6 +51,21 @@ fun HomeScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.padding(top = 24.dp),
             )
+        }
+
+        if (raids.isNotEmpty()) {
+            item { Text("확정된 일정", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
+            items(raids, key = { "raid-${it.partyId}-${it.startMs}" }) { raid ->
+                Card(modifier = Modifier.fillMaxWidth().clickable { onOpenParty(raid.partyId) }) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(TimeSlots.range(raid.startMs, raid.endMs), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "${raid.partyName} · ${raid.bossName} ${Bosses.difficultyLabel(raid.difficulty)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
         }
 
         item { Text("내 파티", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }

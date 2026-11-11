@@ -3,6 +3,7 @@ package com.bossplanner.app.data
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -65,6 +66,52 @@ class PartyRepository(
         scheduleRef(partyId, periodId).collection("unavailable").document(uid)
             .set(mapOf("slots" to slots.sorted(), "submitted" to submitted, "updatedAt" to FieldValue.serverTimestamp()))
             .await()
+    }
+
+    /** 레이드가 끝난 뒤 결과를 직접 기록한다. 서버가 바로 SETTLED / RETRY / EXPIRED로 넘긴다. */
+    suspend fun recordClear(partyId: String, periodId: String, uid: String, cleared: Boolean) {
+        scheduleRef(partyId, periodId).collection("clears").document(uid)
+            .set(
+                mapOf(
+                    "result" to if (cleared) "CLEARED" else "NOT_CLEARED",
+                    "recordedAt" to FieldValue.serverTimestamp(),
+                ),
+            )
+            .await()
+    }
+
+    /** 파티장이 전원 동의 후보를 확정한다. 다른 파티 일정과 겹치면 서버가 거절한다. */
+    suspend fun confirmSchedule(partyId: String, periodId: String, candidateIndex: Int) {
+        call("confirmSchedule", mapOf("partyId" to partyId, "periodId" to periodId, "candidateIndex" to candidateIndex))
+    }
+
+    suspend fun requestChange(partyId: String, periodId: String, reason: String) {
+        call("requestChange", mapOf("partyId" to partyId, "periodId" to periodId, "reason" to reason))
+    }
+
+    suspend fun respondToChange(partyId: String, periodId: String, approve: Boolean) {
+        call("approveChange", mapOf("partyId" to partyId, "periodId" to periodId, "approve" to approve))
+    }
+
+    /** 아직 끝나지 않은 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다. */
+    fun myRaids(uid: String): Flow<List<Raid>> {
+        val now = System.currentTimeMillis()
+        // busy는 30분 칸마다 문서가 하나씩 있다. 어제부터의 칸을 읽어 레이드 단위로 묶는다.
+        return db.collection("users").document(uid).collection("busy")
+            .orderBy(FieldPath.documentId())
+            .startAt(TimeSlots.slotId(now - 24 * 60 * 60 * 1000L))
+            .listen(emptyList()) { snapshot ->
+                snapshot.documents.mapNotNull { doc ->
+                    Raid(
+                        partyId = doc.getString("partyId") ?: return@mapNotNull null,
+                        partyName = doc.getString("partyName").orEmpty(),
+                        bossName = doc.getString("bossName").orEmpty(),
+                        difficulty = doc.getString("difficulty").orEmpty(),
+                        startMs = doc.getTimestamp("start")?.toMillis() ?: return@mapNotNull null,
+                        endMs = doc.getTimestamp("end")?.toMillis() ?: return@mapNotNull null,
+                    )
+                }.distinct().filter { it.endMs > now }.sortedBy { it.startMs }
+            }
     }
 
     suspend fun setVote(partyId: String, periodId: String, uid: String, agreed: List<Int>, round: Int) {
@@ -171,6 +218,20 @@ class PartyRepository(
             },
             unanimous = (doc.get("unanimous") as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
             skippedReason = doc.getString("skippedReason"),
+            confirmed = (doc.get("confirmed") as? Map<*, *>)?.let { c ->
+                val confirmedStart = (c["start"] as? Timestamp)?.toMillis() ?: return@let null
+                val confirmedEnd = (c["end"] as? Timestamp)?.toMillis() ?: return@let null
+                Confirmed(confirmedStart, confirmedEnd)
+            },
+            changeRequest = (doc.get("changeRequest") as? Map<*, *>)?.let { r ->
+                ChangeRequest(
+                    requestedBy = r["requestedBy"] as? String ?: "",
+                    reason = r["reason"] as? String ?: "",
+                    status = r["status"] as? String ?: "",
+                )
+            },
+            retryCount = doc.getLong("retryCount")?.toInt() ?: 0,
+            expiredReason = doc.getString("expiredReason"),
         )
     }
 }
