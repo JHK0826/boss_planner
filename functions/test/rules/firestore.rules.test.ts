@@ -6,7 +6,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 
 let env: RulesTestEnvironment;
@@ -90,6 +90,14 @@ describe("parties", () => {
     const mine = (uid: string) => query(collection(db(uid), "parties"), where("memberUids", "array-contains", uid));
     await assertSucceeds(getDocs(mine(MEMBER)));
     await assertFails(getDocs(collection(db(MEMBER), "parties")));
+  });
+
+  it("파티원은 최근 일정을 조회할 수 있다", async () => {
+    const latest = (uid: string) => query(collection(db(uid), "parties/p1/schedules"), orderBy("periodStart", "desc"), limit(1));
+    await assertSucceeds(getDocs(latest(MEMBER)));
+    await assertFails(getDocs(latest(OUTSIDER)));
+    await assertSucceeds(getDocs(collection(db(MEMBER), `${SCHEDULE}/unavailable`)));
+    await assertFails(getDocs(collection(db(OUTSIDER), `${SCHEDULE}/votes`)));
   });
 
   it("일정 상태는 파티장도 직접 바꿀 수 없다", async () => {

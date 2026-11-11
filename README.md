@@ -73,7 +73,7 @@
 stateDiagram-v2
     [*] --> OPEN: 주기 시작 (목 00:00 / 매월 1일)
     OPEN --> LOCKED: 전원 동의 후보를 파티장이 확정
-    OPEN --> SKIPPED: 전원이 겹치는 시간 없음 (그 주 미사용)
+    OPEN --> SKIPPED: 전원이 겹치는 시간 없음 / 전원 동의 없음 (그 주 미사용)
     LOCKED --> OPEN: 변경 요청 (전날 23:59까지, 파티장 승인)
     LOCKED --> VERIFYING: 예정 시각 경과
     VERIFYING --> SETTLED: 클리어
@@ -151,16 +151,22 @@ flowchart LR
 - 마감까지 제출하지 않은 파티원에게는 입력 요청을, 파티장에게는 미입력자 알림을 보냅니다. 고정 파티라 따로 연락할 수 있으므로 미입력자를 자동으로 제외하지는 않습니다.
 
 **추천 시간**
-- 전원이 제출하면 전원이 가능한 구간 중 보스 소요 시간 이상인 구간을 빠른 순으로 3개 추천합니다.
+- 전원이 제출하면 전원이 가능한 구간 중 보스 소요 시간 이상인 구간을 빠른 순으로 3개 추천합니다. 이미 지난 시간은 추천하지 않습니다.
+- 연속으로 비는 구간마다 앞에서부터 소요 시간만큼 겹치지 않게 자르고, 각 구간의 첫 번째 시간을 먼저 추천합니다. 붙어 있는 시간 3개가 아니라 서로 다른 시간대가 먼저 나오게 하기 위해서입니다.
+- 누군가 불가 시간을 고쳐 다시 제출하거나 제출을 취소하면 추천과 투표는 처음부터 다시 진행합니다.
 - 파티원이 속한 **다른 파티의 확정 시간(`busy`)은 불가 시간과 똑같이** 먼저 제외합니다. 확정 트랜잭션의 충돌 검사는 그 뒤의 최종 방어선입니다.
 - 전원이 겹치는 구간이 하나도 없으면 그 주기는 **SKIPPED(그 주 미사용)**로 끝냅니다.
+- 전원이 투표했는데 전원이 동의한 후보가 없으면 **다음 후보 3개**로 넘어갑니다. 더 줄 후보가 없으면 SKIPPED로 끝냅니다.
 
 **일정 확정**
 - 파티원은 추천 후보 3개마다 동의 여부를 투표합니다. 자기 투표만 쓸 수 있고 다른 사람의 투표는 바꿀 수 없습니다.
 - 전원이 동의한 후보 중에서 파티장이 최종 확정합니다.
 
 **파티 구성 변경**
-- 가입, 탈퇴, 파티장 위임은 **주기가 시작하는 목요일(KST)에만** 할 수 있습니다. 검사는 Cloud Functions에서 합니다.
+- 가입, 탈퇴, 파티장 위임은 **주기 시작일(KST)에만** 할 수 있습니다. 주간 보스 파티는 목요일, 월간 보스 파티는 매월 1일입니다. 검사는 Cloud Functions에서 서버 시각으로 합니다.
+- 가입과 탈퇴는 그날 중에서도 **이번 주기 일정이 확정되기 전**에만 할 수 있습니다. 가입·탈퇴가 있으면 추천과 투표를 다시 진행합니다.
+- 예외: 아직 첫 주기가 시작되지 않은 **새 파티**는 요일과 상관없이 가입·탈퇴·위임할 수 있습니다. 주기 시작일에 만든 파티는 바로 그 주기 일정이 열리고, 다른 날에 만든 파티는 다음 주기 시작 때 첫 일정이 열립니다.
+- 파티장은 다른 파티원에게 위임한 뒤에 탈퇴할 수 있습니다. 마지막 한 명이 탈퇴하면 파티가 삭제됩니다. 파티 정원은 6명입니다.
 
 **일정 변경 요청**
 - 확정(LOCKED) 후에도 **레이드 전날 23:59까지** 변경을 요청할 수 있습니다.
@@ -196,16 +202,21 @@ users/{uid}                      프로필, 선택한 캐릭터, API Key 등록 
   devices/{deviceId}             FCM 토큰 (본인만 접근)
   busy/{slotId}                  확정된 레이드 시간, 30분 칸마다 한 문서 (파티 간 충돌 검사용)
 secrets/{uid}                    API Key, ocid  ← 앱 접근 차단, Functions만 읽음
-parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목록, 6자리 초대 코드
-  schedules/{periodId}           상태, 추천 후보, 확정 시각, 변경 요청
+parties/{partyId}                보스, 난이도, 주기, 소요 시간, 파티장, 파티원 uid 목록·캐릭터, 6자리 초대 코드
+  schedules/{periodId}           상태, 추천 후보, 후보 라운드, 전원 동의 후보, 확정 시각, 변경 요청
     unavailable/{uid}            파티원별 불가 시간 (30분 칸), 제출 여부
     votes/{uid}                  파티원별 동의 투표 (본인만 쓰기)
     clears/{uid}                 직접 기록한 클리어·미클리어
     settlement/{uid}             분배금, 대기·지급함·수령 확인 상태
     messages/{messageId}         정산 채팅
+inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차단, joinParty만 읽음
 ```
 
 **확정 트랜잭션:** 파티장이 확정하면 하나의 트랜잭션 안에서 ① 일정이 아직 OPEN인지, ② 파티원 전원의 `busy` 문서에 겹치는 시간이 없는지 확인한 뒤 LOCKED로 바꾸고 `busy`에 시간을 기록합니다. 같은 사용자가 속한 두 파티가 동시에 확정하면 나중 트랜잭션이 재실행되어 충돌로 거절됩니다. 충돌 단위는 캐릭터가 아니라 **사용자(uid)**입니다. `busy`의 `slotId`는 30분 칸마다 고정된 값(예: `20261112-2030`)이라, 같은 칸을 두 번 만들려는 시도가 문서 단위로 걸립니다.
+
+**주기 ID와 시간 칸:** `periodId`는 주간이 `W-20261112`(시작 목요일), 월간이 `M-202611`입니다. 시간 칸 ID는 KST 기준 `yyyyMMdd-HHmm`(30분 단위)이고 `unavailable`의 `slots`와 `busy`의 문서 ID에 같이 씁니다.
+
+**투표 라운드:** 일정의 `round`는 후보가 바뀔 때마다 1씩 오르고, 투표 문서는 자기가 투표한 `round`를 함께 저장합니다. 지난 라운드의 투표는 세지 않습니다.
 
 **캐릭터 ID:** 앱은 캐릭터를 ocid 대신 ocid의 해시(`characterId`)로 가리킵니다. ocid는 `secrets/{uid}`에만 있습니다.
 
@@ -217,7 +228,7 @@ parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목
 | callable | `listCharacters` | 저장된 캐릭터 목록 반환, 30일이 지났으면 다시 받아 옴 |
 | callable | `getCharacterInfo` | 캐릭터 기본 정보 조회·캐시 |
 | callable | `createParty` | 파티 개설, 6자리 초대 코드 발급 |
-| callable | `joinParty` / `leaveParty` / `delegateLeader` | 가입·탈퇴·파티장 위임 (목요일에만 허용) |
+| callable | `joinParty` / `leaveParty` / `delegateLeader` | 가입·탈퇴·파티장 위임 (주기 시작일에만 허용) |
 | callable | `confirmSchedule` | 파티장 확정, 파티 간 충돌 검사 트랜잭션 |
 | callable | `requestChange` / `approveChange` | 전날 23:59 마감 검사, 승인 시 확정 해제 |
 | scheduled | `weeklyOpen` (목 00:00) | 주간 일정 생성, 시작 알림, 지난 RETRY 만료 처리 |
@@ -225,12 +236,13 @@ parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목
 | scheduled | `dailyClearCheck` (05:00) | 기록 없는 일정 클리어 확인, 30일 지난 캐시 갱신 |
 | scheduled | `inputDeadlineCheck` (매일 00:00) | 입력 마감이 지난 일정의 미입력 경고 |
 | trigger | `onUnavailableWrite` | 전원 제출 시 추천 후보 계산(다른 파티 확정 시간 제외), 겹치는 시간이 없으면 SKIPPED |
+| trigger | `onVoteWrite` | 전원 동의 후보 갱신, 전원이 투표했는데 동의가 없으면 다음 후보 또는 SKIPPED |
 | trigger | `onClearWrite` | 직접 기록한 클리어·미클리어 반영 (SETTLED / RETRY / EXPIRED) |
 | callable | `registerSettlement` / `markPaid` / `confirmReceived` | 분배금 등록, 지급함, 수령 확인 |
 | trigger | `onScheduleStateChange` | 확정·변경·클리어·재조정 알림 |
 | trigger | `onSettlementWrite` | 지급·수령 알림, 전원 확인 시 정산 완료 |
 
-모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 지금 구현된 함수는 `registerApiKey`, `listCharacters`, `getCharacterInfo`이고 나머지는 아래 개발 일정에 따라 추가합니다.
+모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 지금 구현된 함수는 `registerApiKey`, `listCharacters`, `getCharacterInfo`, `createParty`, `joinParty`, `leaveParty`, `delegateLeader`, `onUnavailableWrite`, `onVoteWrite`, `weeklyOpen`, `monthlyOpen`입니다. `weeklyOpen`과 `monthlyOpen`은 아직 일정 생성만 하고, 알림과 만료 처리는 아래 개발 일정에 따라 추가합니다.
 
 ## 보안
 
@@ -267,7 +279,7 @@ parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목
 **설정**
 1. 저장소를 클론합니다.
 2. Firebase 콘솔에서 Android 앱을 등록하고 `google-services.json`을 `app/`에 넣습니다.
-3. Authentication(이메일), Firestore, Cloud Messaging을 활성화합니다.
+3. Authentication(이메일), Firestore, Cloud Messaging을 활성화합니다. Firestore 위치는 Functions와 같은 `asia-northeast3`(서울)로 만듭니다.
 4. Functions를 배포합니다.
    ```bash
    cd functions
@@ -285,9 +297,14 @@ parties/{partyId}                보스, 난이도, 파티장, 파티원 uid 목
 app/                 Android 앱 (Kotlin, Jetpack Compose)
 functions/           Cloud Functions (TypeScript)
   src/nexon/         NEXON Open API 클라이언트 (재시도, 에러 분류)
+  src/domain/        주기·시간 칸 계산, 추천 알고리즘 (순수 함수)
+  src/party/         파티 개설·가입·탈퇴·위임
+  src/schedule/      일정 생성, 추천·투표 판정
   src/callable/      callable 함수
+  src/triggers.ts    Firestore 트리거, 예약 함수
   test/unit/         단위 테스트
   test/rules/        Firestore 보안 규칙 테스트 (에뮬레이터)
+  test/emulator/     파티·추천·투표 통합 테스트 (에뮬레이터)
 firestore.rules      Firestore 보안 규칙
 ```
 
@@ -295,8 +312,8 @@ firestore.rules      Firestore 보안 규칙
 
 ```bash
 cd functions
-npm test             # 단위 테스트
-npm run test:rules   # 보안 규칙 테스트 (Firestore 에뮬레이터, Java 필요)
+npm test               # 단위 테스트
+npm run test:emulator  # 보안 규칙·통합 테스트 (Firestore 에뮬레이터, Java 필요)
 ```
 
 ## 출처
