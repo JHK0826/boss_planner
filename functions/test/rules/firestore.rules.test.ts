@@ -6,7 +6,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 
 let env: RulesTestEnvironment;
@@ -78,6 +78,18 @@ describe("parties", () => {
     await assertFails(getDoc(doc(db(OUTSIDER), "parties/p1")));
     await assertFails(updateDoc(doc(db(MEMBER), "parties/p1"), { leaderUid: MEMBER }));
     await assertFails(updateDoc(doc(db(LEADER), "parties/p1"), { memberUids: [LEADER] }));
+  });
+
+  it("초대 코드 문서는 읽을 수 없다", async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "inviteCodes/ABC123"), { partyId: "p1" }));
+    await assertFails(getDoc(doc(db(LEADER), "inviteCodes/ABC123")));
+    await assertFails(getDoc(doc(db(OUTSIDER), "inviteCodes/ABC123")));
+  });
+
+  it("내가 속한 파티만 목록으로 조회할 수 있다", async () => {
+    const mine = (uid: string) => query(collection(db(uid), "parties"), where("memberUids", "array-contains", uid));
+    await assertSucceeds(getDocs(mine(MEMBER)));
+    await assertFails(getDocs(collection(db(MEMBER), "parties")));
   });
 
   it("일정 상태는 파티장도 직접 바꿀 수 없다", async () => {

@@ -33,6 +33,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // 초대 코드 → 파티 조회는 joinParty callable만 한다. 코드를 훑어볼 수 없게 막는다.
+    match /inviteCodes/{code} {
+      allow read, write: if false;
+    }
+
     match /users/{uid} {
       allow read: if signedIn();
       // apiKeyRegistered 등 나머지 필드는 Functions만 쓴다.
