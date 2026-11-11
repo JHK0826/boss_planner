@@ -6,7 +6,20 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 
 let env: RulesTestEnvironment;
@@ -18,11 +31,15 @@ const SCHEDULE = "parties/p1/schedules/2026-W46";
 
 const db = (uid: string) => env.authenticatedContext(uid).firestore();
 
-async function seed(state: string) {
+const HOUR = 60 * 60 * 1000;
+
+/** startsInMs: 확정된 레이드가 지금부터 몇 ms 뒤에 시작하는가 (음수면 이미 시작) */
+async function seed(state: string, startsInMs = -HOUR) {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const admin = ctx.firestore();
     await setDoc(doc(admin, "parties/p1"), { leaderUid: LEADER, memberUids: [LEADER, MEMBER], inviteCode: "ABC123" });
-    await setDoc(doc(admin, SCHEDULE), { state });
+    const start = Timestamp.fromMillis(Date.now() + startsInMs);
+    await setDoc(doc(admin, SCHEDULE), { state, confirmed: state === "OPEN" ? null : { start } });
     await setDoc(doc(admin, `${SCHEDULE}/votes/${LEADER}`), { agreed: [0], round: 1 });
     await setDoc(doc(admin, `secrets/${MEMBER}`), { apiKey: "k", characters: {} });
     await setDoc(doc(admin, `users/${MEMBER}`), { displayName: "멤버", apiKeyRegistered: true });
@@ -135,6 +152,15 @@ describe("votes", () => {
 
 describe("clears", () => {
   const clear = (result: string) => ({ result, recordedAt: serverTimestamp() });
+
+  it("레이드가 시작하기 전에는 결과를 기록할 수 없다", async () => {
+    await seed("LOCKED", HOUR);
+    await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/clears/${MEMBER}`), clear("CLEARED")));
+    await seed("LOCKED", -HOUR);
+    await assertSucceeds(setDoc(doc(db(MEMBER), `${SCHEDULE}/clears/${MEMBER}`), clear("CLEARED")));
+    await seed("SETTLED");
+    await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/clears/${MEMBER}`), clear("NOT_CLEARED")));
+  });
 
   it("확정된 뒤에만 클리어·미클리어를 기록할 수 있다", async () => {
     await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/clears/${MEMBER}`), clear("CLEARED")));

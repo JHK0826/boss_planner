@@ -26,7 +26,37 @@ export function newScheduleData(period: Period, durationSlots: number): Document
     unanimous: [],
     inputsKey: null,
     skippedReason: null,
+    // 확정된 레이드 시간: { slotId, start, end, memberUids }
+    confirmed: null,
+    confirmedAt: null,
+    // 일정 변경 요청: { requestedBy, reason, requestedAt, status: PENDING | APPROVED | REJECTED }
+    changeRequest: null,
+    retryCount: 0,
+    clearedBy: null,
+    expiredReason: null,
     createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  };
+}
+
+export interface Confirmed {
+  slotId: string;
+  start: Timestamp;
+  end: Timestamp;
+  /** 확정 당시 파티원. busy를 풀 때 쓴다. */
+  memberUids: string[];
+}
+
+/** 추천·투표·확정을 처음부터 다시 하게 만드는 필드 값 */
+export function resetFields(round: number): DocumentData {
+  return {
+    candidates: [],
+    unanimous: [],
+    offeredSlotIds: [],
+    inputsKey: null,
+    round: round + 1,
+    confirmed: null,
+    confirmedAt: null,
     updatedAt: Timestamp.now(),
   };
 }

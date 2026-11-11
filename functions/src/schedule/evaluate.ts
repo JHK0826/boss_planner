@@ -14,7 +14,7 @@ export type EvaluateResult =
   | "next-round";
 
 /**
- * OPEN 상태 일정의 입력과 투표를 보고 다음 단계로 넘긴다. 불가 시간·투표가 바뀌거나
+ * OPEN·RETRY 상태 일정의 입력과 투표를 보고 다음 단계로 넘긴다. 불가 시간·투표가 바뀌거나
  * 파티 구성이 바뀔 때마다 부른다. 여러 번 불러도 결과가 같다.
  *
  * - 전원이 제출하지 않았으면 후보를 비운다.
@@ -35,7 +35,8 @@ export async function evaluateSchedule(
     const [partySnap, scheduleSnap] = await Promise.all([tx.get(partyRef), tx.get(scheduleRef)]);
     const schedule = scheduleSnap.data();
     const party = partySnap.data();
-    if (!party || !schedule || schedule.state !== "OPEN") return "not-open";
+    // RETRY(미클리어 후 재조정)도 OPEN과 같은 절차를 밟는다.
+    if (!party || !schedule || (schedule.state !== "OPEN" && schedule.state !== "RETRY")) return "not-open";
 
     const memberUids = [...(party.memberUids as string[])].sort();
     const period = {
@@ -114,11 +115,14 @@ export async function evaluateSchedule(
     });
 
     if (starts.length === 0) {
+      // 처음 조율이면 그 주 미사용(SKIPPED), 재조정 중이면 더 잡을 시간이 없으므로 EXPIRED
+      const reason = inputsChanged ? "NO_COMMON_TIME" : "NO_AGREEMENT";
       tx.update(scheduleRef, {
         ...clear,
         inputsKey,
-        state: "SKIPPED",
-        skippedReason: inputsChanged ? "NO_COMMON_TIME" : "NO_AGREEMENT",
+        ...(schedule.state === "RETRY"
+          ? { state: "EXPIRED", expiredReason: reason }
+          : { state: "SKIPPED", skippedReason: reason }),
         round: round + 1,
         updatedAt: Timestamp.now(),
       });

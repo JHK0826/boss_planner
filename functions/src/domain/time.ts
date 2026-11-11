@@ -98,3 +98,22 @@ export function slotIndex(period: Pick<Period, "startMs" | "totalSlots">, slotId
 export function slotMs(period: Pick<Period, "startMs">, index: number): number {
   return period.startMs + index * SLOT_MS;
 }
+
+/** ms가 속한 KST 날짜의 00:00 */
+export function startOfKstDay(ms: number): number {
+  const d = kstDate(ms);
+  return fromKst(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** KST 날짜 "YYYY-MM-DD" (NEXON API의 date 파라미터 형식) */
+export function kstDateString(ms: number): string {
+  const d = kstDate(ms);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/** [startMs, endMs) 구간에 걸친 시간 칸 ID */
+export function slotIdsBetween(startMs: number, endMs: number): string[] {
+  const ids: string[] = [];
+  for (let ms = startMs; ms < endMs; ms += SLOT_MS) ids.push(slotIdFromMs(ms));
+  return ids;
+}
