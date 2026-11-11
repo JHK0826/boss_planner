@@ -18,7 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.bossplanner.app.ui.ApiKeyScreen
 import com.bossplanner.app.ui.AuthScreen
 import com.bossplanner.app.ui.CharacterSelectScreen
-import com.bossplanner.app.ui.HomeScreen
+import com.bossplanner.app.ui.MainScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +55,7 @@ private fun App(viewModel: AppViewModel = viewModel()) {
             onSaved = viewModel::doneEditing,
             onCancel = if (current.canCancel) viewModel::doneEditing else null,
         )
-        is Stage.Ready -> HomeScreen(
+        is Stage.Ready -> MainScreen(
             uid = current.uid,
             profile = current.profile,
             onEditCharacters = viewModel::editCharacters,

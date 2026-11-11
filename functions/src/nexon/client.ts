@@ -61,6 +61,27 @@ export interface NexonCharacterBasic {
   character_guild_name: string | null;
 }
 
+/** 스케줄러 API의 보스 항목. 플래그는 문자열 "true"/"false"로 온다. */
+export interface NexonBossContent {
+  content_name: string;
+  /** "easy" | "normal" | "hard" | "chaos" | "extreme" */
+  difficulty: string;
+  /** "bossDaily" | "bossWeekly" | "bossMonthly" */
+  cycle: string;
+  complete_flag: string;
+}
+
+/**
+ * 스케줄러 응답에서 해당 보스·난이도의 클리어 여부를 찾는다.
+ * 목록에 없는 보스면 null (판단 불가).
+ */
+export function bossCompleted(contents: NexonBossContent[], bossName: string, difficulty: string): boolean | null {
+  const entry = contents.find(
+    (b) => b.cycle !== "bossDaily" && b.content_name === bossName && b.difficulty === difficulty.toLowerCase(),
+  );
+  return entry ? entry.complete_flag === "true" : null;
+}
+
 function classify(status: number, code: string | null): NexonErrorKind {
   if (code === INVALID_KEY_CODE) return "invalid-key";
   if (code !== null && MAINTENANCE_CODES.has(code)) return "maintenance";
@@ -107,6 +128,19 @@ export class NexonClient {
       character_image: body.character_image ?? null,
       character_guild_name: body.character_guild_name ?? null,
     };
+  }
+
+  /**
+   * 캐릭터의 보스 클리어 상태. date("YYYY-MM-DD", KST)를 주면 그 날짜 기준 상태를 준다.
+   * 날짜별 조회는 최근 약 7일까지만 되고, 그보다 오래되면 bad-request(OPENAPI00004)가 난다.
+   */
+  async getBossContents(ocid: string, date?: string): Promise<NexonBossContent[]> {
+    const query: Record<string, string> = date ? { ocid, date } : { ocid };
+    const body = await this.get<{ boss_contents?: NexonBossContent[] }>(
+      "/maplestory/v1/scheduler/character-state",
+      query,
+    );
+    return Array.isArray(body.boss_contents) ? body.boss_contents : [];
   }
 
   private async get<T>(path: string, query: Record<string, string>): Promise<T> {

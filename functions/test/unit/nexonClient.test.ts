@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { NexonApiError, NexonClient } from "../../src/nexon/client";
+import { NexonApiError, NexonClient, bossCompleted } from "../../src/nexon/client";
 
 const KEY = "test_key_abcdefghijklmnopqrstuvwxyz";
 
@@ -85,5 +85,42 @@ describe("NexonClient", () => {
 
     expect((fetchFn.mock.calls[0] as unknown as [URL])[0].searchParams.get("ocid")).toBe("o1");
     expect(basic).toMatchObject({ character_level: 280, character_image: null, character_guild_name: null });
+  });
+});
+
+describe("스케줄러 API", () => {
+  // 실제 응답에서 확인한 형식: 플래그는 문자열, 난이도는 소문자, 같은 보스가 일간·주간에 따로 있다.
+  const contents = [
+    { content_name: "자쿰", difficulty: "normal", cycle: "bossDaily", list_order_no: 1, registration_flag: "false", complete_flag: "true" },
+    { content_name: "자쿰", difficulty: "chaos", cycle: "bossWeekly", list_order_no: 2, registration_flag: "false", complete_flag: "false" },
+    { content_name: "스우", difficulty: "hard", cycle: "bossWeekly", list_order_no: 3, registration_flag: "true", complete_flag: "true" },
+    { content_name: "검은 마법사", difficulty: "hard", cycle: "bossMonthly", list_order_no: 4, registration_flag: "false", complete_flag: "false" },
+  ];
+
+  it("ocid와 date를 쿼리로 보내고 boss_contents를 돌려준다", async () => {
+    const fetchFn = vi.fn(async () => json(200, { date: "2026-11-10T00:00+09:00", boss_contents: contents }));
+    const { nexon } = client(fetchFn as unknown as typeof fetch);
+
+    expect(await nexon.getBossContents("o1", "2026-11-10")).toHaveLength(4);
+    const url = (fetchFn.mock.calls[0] as unknown as [URL])[0];
+    expect(url.pathname).toBe("/maplestory/v1/scheduler/character-state");
+    expect(url.searchParams.get("date")).toBe("2026-11-10");
+  });
+
+  it("조회 가능 기간을 벗어난 날짜(OPENAPI00004)는 재시도하지 않는다", async () => {
+    const fetchFn = vi.fn(async () => json(400, { error: { name: "OPENAPI00004", message: "Please input valid parameter" } }));
+    const { nexon } = client(fetchFn as unknown as typeof fetch);
+    await expect(nexon.getBossContents("o1", "2025-01-01")).rejects.toMatchObject({ kind: "bad-request" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("보스 이름과 난이도로 클리어 여부를 찾는다", () => {
+    expect(bossCompleted(contents, "스우", "HARD")).toBe(true);
+    expect(bossCompleted(contents, "자쿰", "CHAOS")).toBe(false);
+    expect(bossCompleted(contents, "검은 마법사", "HARD")).toBe(false);
+    // 일간 보스 항목은 보지 않는다. 목록에 없는 보스·난이도는 판단하지 않는다.
+    expect(bossCompleted(contents, "자쿰", "NORMAL")).toBeNull();
+    expect(bossCompleted(contents, "스우", "EXTREME")).toBeNull();
+    expect(bossCompleted(contents, "없는 보스", "HARD")).toBeNull();
   });
 });

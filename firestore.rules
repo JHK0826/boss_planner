@@ -20,8 +20,18 @@ service cloud.firestore {
         && request.auth.uid in get(/databases/$(database)/documents/parties/$(partyId)).data.memberUids;
     }
 
+    function scheduleData(partyId, periodId) {
+      return get(/databases/$(database)/documents/parties/$(partyId)/schedules/$(periodId)).data;
+    }
+
     function scheduleState(partyId, periodId) {
-      return get(/databases/$(database)/documents/parties/$(partyId)/schedules/$(periodId)).data.state;
+      return scheduleData(partyId, periodId).state;
+    }
+
+    // 확정된 레이드가 시작한 뒤에만 결과를 기록할 수 있다.
+    function raidStarted(partyId, periodId) {
+      let schedule = scheduleData(partyId, periodId);
+      return schedule.state in ['LOCKED', 'VERIFYING'] && request.time >= schedule.confirmed.start;
     }
 
     // 불가 시간 입력과 투표를 받는 상태
@@ -30,6 +40,11 @@ service cloud.firestore {
     }
 
     match /secrets/{uid} {
+      allow read, write: if false;
+    }
+
+    // 초대 코드 → 파티 조회는 joinParty callable만 한다. 코드를 훑어볼 수 없게 막는다.
+    match /inviteCodes/{code} {
       allow read, write: if false;
     }
 
@@ -105,7 +120,7 @@ service cloud.firestore {
         match /clears/{uid} {
           allow read: if isMember(partyId);
           allow create, update: if isSelf(uid) && isMember(partyId)
-            && scheduleState(partyId, periodId) in ['LOCKED', 'VERIFYING']
+            && raidStarted(partyId, periodId)
             && request.resource.data.keys().hasOnly(['result', 'recordedAt'])
             && request.resource.data.result in ['CLEARED', 'NOT_CLEARED']
             && request.resource.data.recordedAt == request.time;

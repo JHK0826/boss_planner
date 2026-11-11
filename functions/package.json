@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run test/unit",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-boss-planner \"vitest run test/rules\"",
+    "test:emulator": "firebase emulators:exec --only firestore --project demo-boss-planner \"vitest run test/rules test/emulator --no-file-parallelism\"",
     "serve": "npm run build && firebase emulators:start --project demo-boss-planner"
   },
   "dependencies": {
