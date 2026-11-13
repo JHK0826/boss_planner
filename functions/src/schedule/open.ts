@@ -1,6 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { currentPeriod, type Cycle } from "../domain/time";
-import { newScheduleData } from "./model";
+import { durationMinutesOf, newScheduleData } from "./model";
 
 const ALREADY_EXISTS = 6;
 
@@ -17,7 +17,7 @@ export async function openSchedules(db: Firestore, cycle: Cycle, nowMs: number):
       await party.ref
         .collection("schedules")
         .doc(period.id)
-        .create(newScheduleData(period, party.get("durationSlots") as number));
+        .create(newScheduleData(period, durationMinutesOf(party.data())));
       created++;
     } catch (error) {
       if ((error as { code?: number }).code !== ALREADY_EXISTS) throw error;

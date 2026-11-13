@@ -16,6 +16,9 @@ const THU = kst("2026-11-12T10:00:00");
 const PERIOD = "W-20261112";
 const WEEK = ["20261112", "20261113", "20261114", "20261115", "20261116", "20261117", "20261118"];
 
+/** 같은 캐릭터가 두 파티에 들어가려면 보스가 달라야 한다. */
+const OTHER_BOSS = [{ name: "데미안", difficulty: "HARD" }];
+
 let db: Firestore;
 
 function day(ymd: string, fromHour = 0, toHour = 24): string[] {
@@ -57,11 +60,13 @@ async function partyReadyToConfirm(
   members: string[],
   free: [string, number, number][] = [["20261114", 20, 22]],
   name = "스우팟",
+  bosses: { name: string; difficulty: string }[] = [{ name: "스우", difficulty: "HARD" }],
+  durationMinutes = 60,
 ) {
   const { partyId, inviteCode } = await createParty(
     db,
     leader,
-    { name, bossName: "스우", difficulty: "HARD", cycle: "WEEKLY", durationMinutes: 60, characterId: `char-${leader}` },
+    { name, bosses, durationMinutes, characterId: `char-${leader}` },
     THU,
   );
   for (const uid of members) await joinParty(db, uid, { inviteCode, characterId: `char-${uid}` }, THU);
@@ -105,7 +110,11 @@ describe("confirmSchedule", () => {
     expect(locked.confirmed).toMatchObject({ slotId: "20261114-2000", memberUids: ["a", "b"] });
     expect(await busyIds("a")).toEqual(["20261114-2000", "20261114-2030"]);
     expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2030"]);
-    expect((await db.doc("users/b/busy/20261114-2000").get()).data()).toMatchObject({ partyId, partyName: "스우팟" });
+    expect((await db.doc("users/b/busy/20261114-2000").get()).data()).toMatchObject({
+      partyId,
+      partyName: "스우팟",
+      bosses: [{ name: "스우", difficulty: "HARD" }],
+    });
 
     await expect(confirm(partyId, "a")).rejects.toMatchObject({ details: { reason: "not-open" } });
   });
@@ -127,7 +136,7 @@ describe("confirmSchedule", () => {
   it("같은 사람이 속한 다른 파티의 확정 시간과 겹치면 거절한다", async () => {
     // b가 두 파티에 속한다. 두 파티 모두 토요일 20시가 후보다.
     const first = await partyReadyToConfirm("a", ["b"]);
-    const second = await partyReadyToConfirm("c", ["b"], [["20261114", 20, 21]], "두번째");
+    const second = await partyReadyToConfirm("c", ["b"], [["20261114", 20, 21]], "두번째", OTHER_BOSS);
     await confirm(first, "a");
 
     await expect(confirm(second, "c")).rejects.toMatchObject({
@@ -140,7 +149,7 @@ describe("confirmSchedule", () => {
 
   it("두 파티가 동시에 확정해도 한쪽만 성공한다", async () => {
     const first = await partyReadyToConfirm("a", ["b"]);
-    const second = await partyReadyToConfirm("c", ["b"], [["20261114", 20, 21]], "두번째");
+    const second = await partyReadyToConfirm("c", ["b"], [["20261114", 20, 21]], "두번째", OTHER_BOSS);
 
     const results = await Promise.allSettled([confirm(first, "a"), confirm(second, "c")]);
 
@@ -154,7 +163,7 @@ describe("confirmSchedule", () => {
     const first = await partyReadyToConfirm("a", ["b"]);
     await confirm(first, "a");
     // 두 번째 파티는 토요일 20~23시가 가능하지만 b가 20~21시에 이미 잡혀 있다.
-    const second = await partyReadyToConfirm("c", ["b"], [["20261114", 20, 23]], "두번째");
+    const second = await partyReadyToConfirm("c", ["b"], [["20261114", 20, 23]], "두번째", OTHER_BOSS);
     expect((await schedule(second)).candidates.map((c: { slotId: string }) => c.slotId)).toEqual([
       "20261114-2100",
       "20261114-2200",
@@ -347,6 +356,29 @@ describe("runDailyClearCheck", () => {
 
     expect(await runDailyClearCheck(db, kst("2026-11-21T05:00:00"), makeClient)).toMatchObject({ expired: 1 });
     expect(await schedule(partyId)).toMatchObject({ state: "EXPIRED", expiredReason: "UNVERIFIED" });
+  });
+
+  it("묶음 파티는 묶은 보스를 모두 클리어해야 클리어로 본다", async () => {
+    const bundle = [{ name: "스우", difficulty: "HARD" }, { name: "데미안", difficulty: "HARD" }];
+    const contents = (demianDone: boolean): NexonBossContent[] => [
+      { content_name: "스우", difficulty: "hard", cycle: "bossWeekly", complete_flag: "true" },
+      { content_name: "데미안", difficulty: "hard", cycle: "bossWeekly", complete_flag: String(demianDone) },
+    ];
+
+    const partial = await partyReadyToConfirm("a", ["b"], [["20261114", 20, 21], ["20261116", 20, 21]], "묶음", bundle, 40);
+    await confirm(partial, "a");
+    expect((await schedule(partial)).confirmed.end.toMillis()).toBe(kst("2026-11-14T20:40:00"));
+    expect(await busyIds("a")).toEqual(["20261114-2000", "20261114-2030"]);
+
+    const one = fakeNexon({ "key-a": contents(false), "key-b": contents(false) });
+    expect(await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), one.makeClient)).toMatchObject({ retry: 1 });
+
+    const round = (await schedule(partial)).round;
+    await vote(partial, "a", [0], round);
+    await vote(partial, "b", [0], round);
+    await confirm(partial, "a", 0, kst("2026-11-15T05:00:00"));
+    const both = fakeNexon({ "key-a": contents(true) });
+    expect(await runDailyClearCheck(db, kst("2026-11-17T05:00:00"), both.makeClient)).toMatchObject({ settled: 1 });
   });
 
   it("방금 끝난 레이드는 API 반영을 기다린다", async () => {

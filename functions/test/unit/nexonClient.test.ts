@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { NexonApiError, NexonClient, bossCompleted } from "../../src/nexon/client";
+import { NexonApiError, NexonClient, allBossesCompleted, bossCompleted } from "../../src/nexon/client";
 
 const KEY = "test_key_abcdefghijklmnopqrstuvwxyz";
 
@@ -122,5 +122,15 @@ describe("스케줄러 API", () => {
     expect(bossCompleted(contents, "자쿰", "NORMAL")).toBeNull();
     expect(bossCompleted(contents, "스우", "EXTREME")).toBeNull();
     expect(bossCompleted(contents, "없는 보스", "HARD")).toBeNull();
+  });
+
+  it("묶음 파티는 전부 클리어해야 클리어, 하나라도 미클리어면 미클리어다", () => {
+    const boss = (name: string, difficulty: string) => ({ name, difficulty });
+    expect(allBossesCompleted(contents, [boss("스우", "HARD")])).toBe(true);
+    expect(allBossesCompleted(contents, [boss("스우", "HARD"), boss("자쿰", "CHAOS")])).toBe(false);
+    // 판단할 수 없는 보스가 섞여 있으면 클리어라고 하지 않는다. 미클리어가 있으면 미클리어다.
+    expect(allBossesCompleted(contents, [boss("스우", "HARD"), boss("없는 보스", "HARD")])).toBeNull();
+    expect(allBossesCompleted(contents, [boss("자쿰", "CHAOS"), boss("없는 보스", "HARD")])).toBe(false);
+    expect(allBossesCompleted(contents, [])).toBeNull();
   });
 });

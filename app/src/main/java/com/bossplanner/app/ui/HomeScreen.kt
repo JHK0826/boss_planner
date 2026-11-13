@@ -60,7 +60,7 @@ fun HomeScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(TimeSlots.range(raid.startMs, raid.endMs), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "${raid.partyName} · ${raid.bossName} ${Bosses.difficultyLabel(raid.difficulty)}",
+                            "${raid.partyName} · ${Bosses.label(raid.bosses)}",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -77,8 +77,7 @@ fun HomeScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(party.name, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "${party.bossName} · ${Bosses.difficultyLabel(party.difficulty)} · " +
-                            "${if (party.isWeekly) "주간" else "월간"} · ${party.memberUids.size}명",
+                        "${party.bossLabel} · ${if (party.isWeekly) "주간" else "월간"} · ${party.memberUids.size}명",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

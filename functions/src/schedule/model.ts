@@ -11,14 +11,17 @@ export interface Candidate {
 }
 
 /** 새 주기의 일정 문서 초깃값 */
-export function newScheduleData(period: Period, durationSlots: number): DocumentData {
+export function newScheduleData(period: Period, durationMinutes: number): DocumentData {
   return {
     state: "OPEN" satisfies ScheduleState,
     cycle: period.cycle,
     periodStart: Timestamp.fromMillis(period.startMs),
     periodEnd: Timestamp.fromMillis(period.endMs),
     inputDeadline: Timestamp.fromMillis(period.inputDeadlineMs),
-    durationSlots,
+    // 실제 소요 시간(분). 20분 단위로 잡을 수 있다.
+    durationMinutes,
+    // 시간표는 30분 칸이라, 추천과 충돌 검사는 소요 시간을 덮는 칸 수로 한다 (40분 → 2칸).
+    durationSlots: slotsForMinutes(durationMinutes),
     // 후보가 바뀔 때마다 1씩 오른다. 투표는 같은 round일 때만 유효하다.
     round: 0,
     candidates: [],
@@ -39,6 +42,16 @@ export function newScheduleData(period: Period, durationSlots: number): Document
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   };
+}
+
+/** 소요 시간을 덮는 데 필요한 30분 칸 수 */
+export function slotsForMinutes(durationMinutes: number): number {
+  return Math.ceil(durationMinutes / 30);
+}
+
+/** 파티 문서의 소요 시간(분). 예전 형식(durationSlots만 있음)도 받는다. */
+export function durationMinutesOf(party: DocumentData): number {
+  return typeof party.durationMinutes === "number" ? party.durationMinutes : (party.durationSlots as number) * 30;
 }
 
 export interface Confirmed {

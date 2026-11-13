@@ -1,5 +1,6 @@
 import { Timestamp, type DocumentData, type Firestore, type Transaction } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
+import { bossesOf } from "../domain/bosses";
 import { unanimousCandidates } from "../domain/recommend";
 import { slotIdsBetween } from "../domain/time";
 import type { Candidate, Confirmed } from "./model";
@@ -106,8 +107,7 @@ export async function confirmSchedule(
       partyId,
       periodId,
       partyName: party.name,
-      bossName: party.bossName,
-      difficulty: party.difficulty,
+      bosses: bossesOf(party),
       start: candidate.start,
       end: candidate.end,
     };

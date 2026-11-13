@@ -82,6 +82,20 @@ export function bossCompleted(contents: NexonBossContent[], bossName: string, di
   return entry ? entry.complete_flag === "true" : null;
 }
 
+/**
+ * 묶음 파티의 보스를 모두 클리어했는가.
+ * 하나라도 미클리어면 false, 미클리어는 없지만 판단할 수 없는 보스가 있으면 null.
+ */
+export function allBossesCompleted(
+  contents: NexonBossContent[],
+  bosses: { name: string; difficulty: string }[],
+): boolean | null {
+  if (bosses.length === 0) return null;
+  const results = bosses.map((boss) => bossCompleted(contents, boss.name, boss.difficulty));
+  if (results.includes(false)) return false;
+  return results.includes(null) ? null : true;
+}
+
 function classify(status: number, code: string | null): NexonErrorKind {
   if (code === INVALID_KEY_CODE) return "invalid-key";
   if (code !== null && MAINTENANCE_CODES.has(code)) return "maintenance";

@@ -89,7 +89,9 @@ fun MainScreen(
             onSignOut = onSignOut,
         )
         Screen.CreateParty -> CreatePartyScreen(
+            uid = uid,
             characters = characters,
+            myParties = parties,
             onCreated = { screen = Screen.PartyDetail(it) },
             onBack = { screen = Screen.Home },
             parties = partyRepository,

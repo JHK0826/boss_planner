@@ -6,15 +6,18 @@ data class PartyMember(
     val characterName: String,
     val job: String,
     val level: Int,
+    val characterId: String,
 )
+
+/** 파티가 잡는 보스 하나. 여러 보스를 묶어 한 번에 갈 수 있다. */
+data class PartyBoss(val name: String, val difficulty: String)
 
 data class Party(
     val id: String,
     val name: String,
-    val bossName: String,
-    val difficulty: String,
+    val bosses: List<PartyBoss>,
     val cycle: String,
-    val durationSlots: Int,
+    val durationMinutes: Int,
     val leaderUid: String,
     val memberUids: List<String>,
     val members: Map<String, PartyMember>,
@@ -22,6 +25,7 @@ data class Party(
     val scheduleStarted: Boolean,
 ) {
     val isWeekly: Boolean get() = cycle == "WEEKLY"
+    val bossLabel: String get() = Bosses.label(bosses)
 }
 
 data class Candidate(val slotId: String, val startMs: Long, val endMs: Long)
@@ -71,8 +75,7 @@ data class ChatMessage(val id: String, val senderUid: String, val text: String, 
 data class Raid(
     val partyId: String,
     val partyName: String,
-    val bossName: String,
-    val difficulty: String,
+    val bosses: List<PartyBoss>,
     val startMs: Long,
     val endMs: Long,
 )
@@ -81,44 +84,12 @@ data class Unavailable(val slots: List<String>, val submitted: Boolean)
 
 data class Vote(val agreed: List<Int>, val round: Int)
 
-data class Boss(val name: String, val difficulties: List<String>, val monthly: Boolean = false)
+/** 파티로 갈 수 있는 보스. 목록은 서버(getBossCatalog)에서 받는다. */
+data class BossCatalogEntry(val name: String, val difficulties: List<String>, val monthly: Boolean)
 
-/**
- * 주간·월간 보스 목록. 이름과 난이도는 NEXON 스케줄러 API의 boss_contents 값과 같아야
- * 05:00 자동 클리어 확인이 된다 (2026-11 기준 API 응답에서 가져옴).
- */
+data class BossCatalog(val bosses: List<BossCatalogEntry>, val minutesPerBoss: Int, val maxDurationMinutes: Int)
+
 object Bosses {
-    val all = listOf(
-        Boss("자쿰", listOf("CHAOS")),
-        Boss("매그너스", listOf("HARD")),
-        Boss("파풀라투스", listOf("CHAOS")),
-        Boss("피에르", listOf("CHAOS")),
-        Boss("반반", listOf("CHAOS")),
-        Boss("블러디퀸", listOf("CHAOS")),
-        Boss("벨룸", listOf("CHAOS")),
-        Boss("스우", listOf("NORMAL", "HARD", "EXTREME")),
-        Boss("데미안", listOf("NORMAL", "HARD")),
-        Boss("가디언 엔젤 슬라임", listOf("NORMAL", "CHAOS")),
-        Boss("루시드", listOf("EASY", "NORMAL", "HARD")),
-        Boss("윌", listOf("EASY", "NORMAL", "HARD")),
-        Boss("더스크", listOf("NORMAL", "CHAOS")),
-        Boss("진 힐라", listOf("NORMAL", "HARD")),
-        Boss("듄켈", listOf("NORMAL", "HARD")),
-        Boss("검은 마법사", listOf("HARD", "EXTREME"), monthly = true),
-        Boss("선택받은 세렌", listOf("NORMAL", "HARD", "EXTREME")),
-        Boss("감시자 칼로스", listOf("EASY", "NORMAL", "CHAOS", "EXTREME")),
-        Boss("카링", listOf("EASY", "NORMAL", "HARD", "EXTREME")),
-        Boss("림보", listOf("NORMAL", "HARD", "EXTREME")),
-        Boss("발드릭스", listOf("NORMAL", "HARD", "EXTREME")),
-        Boss("최초의 대적자", listOf("EASY", "NORMAL", "HARD", "EXTREME")),
-        Boss("찬란한 흉성", listOf("NORMAL", "HARD")),
-        Boss("유피테르", listOf("NORMAL", "HARD")),
-        Boss("시즌 보스 메이린", listOf("NORMAL", "HARD")),
-        Boss("벨로나", listOf("EASY", "NORMAL", "HARD")),
-    )
-
-    fun find(name: String): Boss = all.firstOrNull { it.name == name } ?: all.first()
-
     private val labels = mapOf(
         "EASY" to "이지",
         "NORMAL" to "노멀",
@@ -128,4 +99,8 @@ object Bosses {
     )
 
     fun difficultyLabel(code: String): String = labels[code] ?: code
+
+    /** "하드 발드릭스, 하드 벨로나" */
+    fun label(bosses: List<PartyBoss>): String =
+        bosses.joinToString(", ") { "${difficultyLabel(it.difficulty)} ${it.name}" }
 }
