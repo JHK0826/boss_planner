@@ -17,8 +17,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
@@ -27,6 +29,15 @@ import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.Raid
 import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.UserProfile
+
+/** 설치된 앱의 버전 (version.properties의 versionName) */
+@Composable
+private fun appVersionName(): String {
+    val context = LocalContext.current
+    return remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
+    }
+}
 
 @Composable
 fun HomeScreen(
@@ -110,6 +121,13 @@ fun HomeScreen(
                     TextButton(onClick = onEditApiKey) { Text("API Key 다시 등록") }
                     TextButton(onClick = onSignOut) { Text("로그아웃") }
                 }
+                // 파티원끼리 같은 버전을 쓰는지 확인할 수 있게 보여 준다.
+                Text(
+                    "버전 ${appVersionName()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp, top = 8.dp),
+                )
             }
         }
     }
