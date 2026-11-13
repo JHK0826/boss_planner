@@ -390,9 +390,9 @@ npm run test:emulator  # 보안 규칙·통합 테스트 (Firestore 에뮬레이
 
 | 자리 | 올리는 때 | 예 |
 | --- | --- | --- |
-| PATCH | 버그 수정, 문구·화면 다듬기 | 1.0.0 → 1.0.1 |
-| MINOR | 기능 추가. 이전 앱도 계속 쓸 수 있음 | 1.0.1 → 1.1.0 |
-| MAJOR | 이전 앱이 새 서버와 맞지 않게 되는 변경. 파티원 전원이 앱을 다시 설치해야 함 | 1.1.0 → 2.0.0 |
+| PATCH | 버그 수정, 문구·화면 다듬기 | 0.1.0 → 0.1.1 |
+| MINOR | 기능 추가. 이전 앱도 계속 쓸 수 있음 | 0.1.1 → 0.2.0 |
+| MAJOR | 이전 앱이 새 서버와 맞지 않게 되는 변경. 파티원 전원이 앱을 다시 설치해야 함 | 0.2.0 → 1.0.0 |
 
 **패치를 올리는 순서**
 
@@ -400,7 +400,29 @@ npm run test:emulator  # 보안 규칙·통합 테스트 (Firestore 에뮬레이
 2. [CHANGELOG.md](CHANGELOG.md) 맨 위에 `## <버전> - <날짜>` 항목을 추가하고 바뀐 내용, 서버 배포가 필요한지, 이전 앱과 호환되는지를 적습니다.
 3. 코드 변경과 함께 PR로 올려 `main`에 병합합니다.
 4. 병합되면 GitHub Actions가 `v<버전>` 태그와 GitHub 릴리스를 자동으로 만듭니다. 릴리스 노트는 CHANGELOG의 해당 항목입니다.
-5. 서버 변경이 있으면 Functions를 배포하고, APK를 빌드해 릴리스에 첨부하거나 파티원에게 보냅니다.
+5. 서버 변경이 있으면 Functions를 배포합니다. 파티원은 릴리스 페이지에서 APK를 받아 설치합니다.
+
+**릴리스에 APK 자동 첨부**
+
+저장소의 **Settings → Secrets and variables → Actions → New repository secret**에 아래 값을 등록해 두면, 릴리스를 만들 때 서명한 APK(`boss-planner-<버전>-release.apk`)를 빌드해 함께 올립니다. 등록하지 않으면 APK 없이 릴리스만 만들어집니다.
+
+| 이름 | 값 |
+| --- | --- |
+| `GOOGLE_SERVICES_JSON` | `google-services.json` 파일의 내용 전체 |
+| `KEYSTORE_BASE64` | 서명 키 저장소 파일을 base64로 바꾼 글자 |
+| `KEYSTORE_PASSWORD` | 키 저장소 비밀번호 |
+| `KEY_ALIAS` (선택) | 키 별칭. 등록하지 않으면 `bossplanner` |
+| `KEY_PASSWORD` (선택) | 키 비밀번호. 등록하지 않으면 키 저장소 비밀번호와 같다고 봅니다 |
+
+서명 키 저장소는 한 번만 만듭니다. `keytool`은 Android Studio에 들어 있습니다.
+
+```bash
+keytool -genkeypair -keystore boss-planner.keystore -alias bossplanner -keyalg RSA -keysize 2048 -validity 10000
+```
+
+> 서명 키 저장소 파일과 비밀번호는 저장소 밖의 안전한 곳에 따로 보관하세요. 잃어버리면 같은 서명으로 빌드할 수 없어서, 파티원이 기존 앱을 지우고 새로 설치해야 합니다. 이 파일은 커밋하지 마세요(`.gitignore`에 들어 있습니다).
+
+릴리스의 APK는 릴리스 키로 서명되고, 컴퓨터에서 `assembleDebug`로 만든 APK는 디버그 키로 서명됩니다. 서명이 다르면 서로 덮어 설치되지 않으므로, 파티원에게는 릴리스 페이지의 APK만 배포하세요.
 
 `version.properties`를 고치지 않은 병합은 릴리스를 만들지 않습니다. 문서만 고친 경우처럼 버전을 올릴 필요가 없는 변경은 그대로 병합하면 됩니다.
 
