@@ -31,6 +31,8 @@ export function newScheduleData(period: Period, durationSlots: number): Document
     confirmedAt: null,
     // 일정 변경 요청: { requestedBy, reason, requestedAt, status: PENDING | APPROVED | REJECTED }
     changeRequest: null,
+    // 분배금: { sellerUid, amountPerPerson, registeredAt, completed, completedAt }
+    settlement: null,
     retryCount: 0,
     clearedBy: null,
     expiredReason: null,

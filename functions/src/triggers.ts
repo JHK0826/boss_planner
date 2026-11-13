@@ -1,7 +1,9 @@
 import { getFirestore } from "firebase-admin/firestore";
-import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { REGION, TIME_ZONE } from "./config";
+import { messageNotification, scheduleNotifications, settlementNotifications } from "./notify/messages";
+import { runInputDeadlineCheck, sendPushes, toPartyInfo } from "./notify/send";
 import { resolveRaidResult, runDailyClearCheck } from "./schedule/clear";
 import { evaluateSchedule } from "./schedule/evaluate";
 import { openSchedules } from "./schedule/open";
@@ -57,5 +59,54 @@ export const dailyClearCheck = onSchedule(
   { schedule: "0 5 * * *", timeZone: TIME_ZONE, region: REGION, timeoutSeconds: 540 },
   async () => {
     await runDailyClearCheck(getFirestore(), Date.now());
+  },
+);
+
+/** 매일 00:00 KST: 입력 마감이 지난 일정의 미입력 파티원과 파티장에게 알림 */
+export const inputDeadlineCheck = onSchedule({ schedule: "0 0 * * *", timeZone: TIME_ZONE, region: REGION }, async () => {
+  await runInputDeadlineCheck(getFirestore(), Date.now());
+});
+
+/** 일정이 바뀌면 알림: 시작, 추천, 전원 동의, 확정, 변경 요청, 결과, 분배금 등록, 정산 완료 */
+export const onScheduleStateChange = onDocumentWritten(
+  { document: "parties/{partyId}/schedules/{periodId}", region: REGION },
+  async (event) => {
+    const db = getFirestore();
+    const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());
+    if (!party) return;
+    await sendPushes(db, scheduleNotifications(party, event.data?.before.data(), event.data?.after.data()));
+  },
+);
+
+/** 분배금 상태가 바뀌면 알림: 지급함 → 받는 사람, 수령 확인 → 판매자 */
+export const onSettlementWrite = onDocumentWritten(
+  { document: "parties/{partyId}/schedules/{periodId}/settlement/{uid}", region: REGION },
+  async (event) => {
+    const db = getFirestore();
+    const partyRef = db.doc(`parties/${event.params.partyId}`);
+    const [partySnap, scheduleSnap] = await Promise.all([
+      partyRef.get(),
+      partyRef.collection("schedules").doc(event.params.periodId).get(),
+    ]);
+    const party = toPartyInfo(partySnap);
+    const sellerUid = scheduleSnap.get("settlement.sellerUid") as string | undefined;
+    if (!party || !sellerUid) return;
+    await sendPushes(
+      db,
+      settlementNotifications(party, sellerUid, event.params.uid, event.data?.before.data(), event.data?.after.data()),
+    );
+  },
+);
+
+/** 정산 채팅 메시지가 오면 다른 파티원에게 알림 */
+export const onMessageCreate = onDocumentCreated(
+  { document: "parties/{partyId}/schedules/{periodId}/messages/{messageId}", region: REGION },
+  async (event) => {
+    const db = getFirestore();
+    const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());
+    const senderUid = event.data?.get("senderUid") as string | undefined;
+    const text = event.data?.get("text") as string | undefined;
+    if (!party || !senderUid || !text) return;
+    await sendPushes(db, messageNotification(party, senderUid, text));
   },
 );
