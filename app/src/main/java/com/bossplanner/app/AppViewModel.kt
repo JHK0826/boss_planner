@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.bossplanner.app.data.AuthRepository
 import com.bossplanner.app.data.UserProfile
 import com.bossplanner.app.data.UserRepository
+import com.bossplanner.app.push.Push
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /** 온보딩 단계: 로그인 → API Key 등록 → 캐릭터 선택 → 홈 */
 sealed interface Stage {
@@ -63,6 +66,10 @@ class AppViewModel(
 
     fun signOut() {
         editing.value = Editing.None
-        auth.signOut()
+        viewModelScope.launch {
+            // 로그아웃한 기기로 알림이 가지 않게 토큰을 먼저 지운다. 오프라인이면 기다리지 않는다.
+            auth.currentUid?.let { uid -> runCatching { withTimeout(3_000) { Push.unregister(uid) } } }
+            auth.signOut()
+        }
     }
 }

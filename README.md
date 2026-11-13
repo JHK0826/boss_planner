@@ -190,6 +190,25 @@ flowchart LR
 - 파티원들의 API Key로 차례로 조회해 **한 명이라도 클리어로 나오면 클리어**, 확인된 사람이 모두 미클리어면 미클리어로 봅니다. 키 만료나 점검으로 아무도 확인하지 못하면 VERIFYING에 두고 다음 날 다시 확인하며, 주기가 끝나고 이틀이 지나도 확인하지 못하면 EXPIRED로 끝냅니다.
 - 일정을 확정하지 못한 채 주기가 끝나면 OPEN은 SKIPPED로, RETRY는 EXPIRED로 끝냅니다.
 
+**알림**
+
+| 때 | 받는 사람 |
+| --- | --- |
+| 주기 시작 | 전원 |
+| 입력 마감이 지났는데 미입력 (매일 00:00) | 미입력 파티원에게 입력 요청, 파티장에게 "미입력 파티원이 존재합니다" |
+| 추천 시간이 나옴, 다음 후보로 넘어감 | 전원 |
+| 전원이 동의한 후보가 생김 | 파티장 |
+| 일정 확정 | 전원 |
+| 변경 요청 / 승인 / 거절 | 파티장 / 전원 / 요청한 사람 |
+| 예정 시각이 지나 결과 기록 필요 | 전원 |
+| 클리어, 미클리어 재조정, 미사용·만료 | 전원 |
+| 분배금 등록 | 받을 파티원 |
+| 지급함 / 수령 확인 | 받는 사람 / 판매자 |
+| 정산 완료 | 전원 |
+| 정산 채팅 메시지 | 보낸 사람을 뺀 전원 |
+
+알림을 누르면 해당 파티 화면이 열립니다. 로그아웃하면 그 기기의 토큰을 지워 알림이 가지 않습니다.
+
 **주기와 마감**
 
 | 보스 | 시작 | 마감 |
@@ -200,8 +219,10 @@ flowchart LR
 **분배금 정산**
 - 드롭 아이템을 판매한 파티원이 1인 분배금을 등록합니다(판매 금액은 넥슨 API에 없으므로 사용자 입력).
 - 한 일정에는 **판매자 1명, 금액 1건**만 담습니다. 판매한 금액 전체를 인원수로 나누기 때문입니다.
+- 클리어한 일정(SETTLED)에서 **먼저 등록한 파티원이 판매자**가 됩니다. 판매자는 아무에게도 지급하기 전까지 금액을 고쳐 다시 등록할 수 있습니다.
 - 받을 파티원은 채팅으로 수령 방법을 전달합니다.
-- 판매자 `지급함` → 받은 사람 `수령 확인`, 전원 수령 확인 시 정산 완료.
+- 판매자 `지급함` → 받은 사람 `수령 확인`, 전원 수령 확인 시 정산 완료. 상태는 이 순서로만 바뀌며, 판매자가 `지급함`으로 표시하기 전에는 수령을 확인할 수 없습니다.
+- 다음 주기가 시작된 뒤에도 끝나지 않은 지난 주기 정산은 파티 화면에서 계속 열 수 있습니다(최근 4개 주기).
 - 확장 가능성: 경매장 수수료를 뺀 뒤 전원이 같은 금액을 받도록 계산하는 **분배금 계산**, 균등 분배가 아닌 **배율 조정**. 분배금을 파티원별 문서(`settlement/{uid}`)에 두는 것은 이 확장을 위한 구조입니다.
 
 ## 데이터 구조
@@ -209,11 +230,11 @@ flowchart LR
 ```text
 users/{uid}                      프로필, 선택한 캐릭터, API Key 등록 여부
   characters/{characterId}       캐릭터 기본 정보 캐시 (레벨, 직업, 이미지 / ocid 없음)
-  devices/{deviceId}             FCM 토큰 (본인만 접근)
+  devices/{token}                FCM 토큰이 문서 ID (본인만 접근)
   busy/{slotId}                  확정된 레이드 시간, 30분 칸마다 한 문서 (파티 간 충돌 검사, 내 시간표 표시)
 secrets/{uid}                    API Key, ocid  ← 앱 접근 차단, Functions만 읽음
 parties/{partyId}                보스, 난이도, 주기, 소요 시간, 파티장, 파티원 uid 목록·캐릭터, 6자리 초대 코드
-  schedules/{periodId}           상태, 추천 후보, 후보 라운드, 전원 동의 후보, 확정 시각, 변경 요청
+  schedules/{periodId}           상태, 추천 후보, 후보 라운드, 전원 동의 후보, 확정 시각, 변경 요청, 분배금 요약
     unavailable/{uid}            파티원별 불가 시간 (30분 칸), 제출 여부
     votes/{uid}                  파티원별 동의 투표 (본인만 쓰기)
     clears/{uid}                 직접 기록한 클리어·미클리어
@@ -250,10 +271,11 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 | trigger | `onVoteWrite` | 전원 동의 후보 갱신, 전원이 투표했는데 동의가 없으면 다음 후보 또는 SKIPPED |
 | trigger | `onClearWrite` | 직접 기록한 클리어·미클리어 반영 (SETTLED / RETRY / EXPIRED) |
 | callable | `registerSettlement` / `markPaid` / `confirmReceived` | 분배금 등록, 지급함, 수령 확인 |
-| trigger | `onScheduleStateChange` | 확정·변경·클리어·재조정 알림 |
-| trigger | `onSettlementWrite` | 지급·수령 알림, 전원 확인 시 정산 완료 |
+| trigger | `onScheduleStateChange` | 시작·추천·확정·변경·클리어·재조정·분배금 등록·정산 완료 알림 |
+| trigger | `onSettlementWrite` | 지급·수령 알림 |
+| trigger | `onMessageCreate` | 정산 채팅 알림 |
 
-모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 아직 구현되지 않은 것은 `registerSettlement` / `markPaid` / `confirmReceived`, `onScheduleStateChange`, `onSettlementWrite`, `inputDeadlineCheck`와 모든 푸시 알림입니다(4주차). `weeklyOpen`과 `monthlyOpen`은 일정 생성과 지난 주기 정리까지 합니다.
+모든 예약 함수는 `timeZone: "Asia/Seoul"`로 실행합니다. 위 함수는 모두 구현되어 있습니다. 전원 수령 확인 시의 정산 완료 처리는 트리거가 아니라 `confirmReceived` 안에서 합니다.
 
 ## 보안
 
@@ -272,10 +294,14 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 | 3주차 | 확정과 확인 | 일정 확정·시간표, 변경 요청, 스케줄러 API 확인, 05시 예약 실행, RETRY 재조정 |
 | 4주차 | 정산과 마무리 | 분배금 등록·채팅, 지급·수령 확인, FCM 알림, APK 빌드 |
 
-- [ ] Phase 1 · 온보딩
-- [ ] Phase 2 · 주간 스케줄링
-- [ ] Phase 3 · 클리어 확인
-- [ ] Phase 4 · 사후 처리·정산
+네 Phase 모두 코드 구현을 마쳤습니다. 서버 로직은 단위 테스트와 Firestore 에뮬레이터 테스트로 확인했고, 앱은 빌드까지 확인했습니다. 남은 것은 실제 Firebase 프로젝트 배포와 기기에서의 동작 확인입니다.
+
+- [x] Phase 1 · 온보딩 (구현)
+- [x] Phase 2 · 주간 스케줄링 (구현)
+- [x] Phase 3 · 클리어 확인 (구현)
+- [x] Phase 4 · 사후 처리·정산 (구현)
+- [ ] 실제 Firebase 프로젝트에 배포해 트리거·예약 함수·푸시 알림 확인
+- [ ] 기기에서 전체 흐름 확인
 
 ## 시작하기
 
@@ -302,6 +328,14 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 
 > `google-services.json`과 API Key는 저장소에 커밋하지 마세요.
 
+**APK 만들기**
+
+```bash
+./gradlew assembleDebug
+```
+
+`app/build/outputs/apk/debug/app-debug.apk`가 만들어집니다. 이 파일을 파티원에게 보내 설치하면 됩니다(기기에서 "출처를 알 수 없는 앱 설치" 허용 필요). 디버그 키로 서명된 APK라 스토어에는 올릴 수 없고, 빌드한 컴퓨터가 바뀌면 서명이 달라져 기존 앱 위에 덮어 설치되지 않습니다. 계속 배포하려면 한 컴퓨터에서 빌드하거나 릴리스 서명 키를 따로 만들어 쓰세요.
+
 **폴더 구조**
 
 ```text
@@ -311,11 +345,13 @@ functions/           Cloud Functions (TypeScript)
   src/domain/        주기·시간 칸 계산, 추천 알고리즘 (순수 함수)
   src/party/         파티 개설·가입·탈퇴·위임
   src/schedule/      일정 생성, 추천·투표 판정
+  src/settlement/    분배금 등록, 지급·수령 확인
+  src/notify/        알림 문구 규칙 (순수 함수), FCM 발송
   src/callable/      callable 함수
   src/triggers.ts    Firestore 트리거, 예약 함수
   test/unit/         단위 테스트
   test/rules/        Firestore 보안 규칙 테스트 (에뮬레이터)
-  test/emulator/     파티·추천·투표 통합 테스트 (에뮬레이터)
+  test/emulator/     파티·일정·정산·알림 통합 테스트 (에뮬레이터)
 firestore.rules      Firestore 보안 규칙
 ```
 
