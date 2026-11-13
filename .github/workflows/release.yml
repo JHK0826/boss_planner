@@ -1,0 +1,41 @@
+# version.properties가 main에서 바뀌면 그 버전의 태그와 GitHub 릴리스를 만든다.
+# 릴리스 노트는 CHANGELOG.md의 해당 버전 항목이다.
+# APK는 붙이지 않는다 (google-services.json과 서명 키가 저장소에 없기 때문). 직접 빌드해 릴리스에 올린다.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [version.properties]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          name=$(grep '^versionName=' version.properties | cut -d= -f2)
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "tag=v$name" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists. Nothing to do."
+            exit 0
+          fi
+          if ! scripts/changelog-section.sh "$VERSION" > notes.md; then
+            echo "::error::CHANGELOG.md에 $VERSION 항목이 없습니다. 항목을 추가한 뒤 다시 올려 주세요."
+            exit 1
+          fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md

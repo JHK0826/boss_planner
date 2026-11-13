@@ -25,6 +25,7 @@
 - [보안](#보안)
 - [개발 일정](#개발-일정)
 - [시작하기](#시작하기)
+- [버전 관리](#버전-관리)
 - [출처](#출처)
 
 ---
@@ -348,7 +349,7 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 ./gradlew assembleDebug
 ```
 
-`app/build/outputs/apk/debug/app-debug.apk`가 만들어집니다. 이 파일을 파티원에게 보내 설치하면 됩니다(기기에서 "출처를 알 수 없는 앱 설치" 허용 필요). 디버그 키로 서명된 APK라 스토어에는 올릴 수 없고, 빌드한 컴퓨터가 바뀌면 서명이 달라져 기존 앱 위에 덮어 설치되지 않습니다. 계속 배포하려면 한 컴퓨터에서 빌드하거나 릴리스 서명 키를 따로 만들어 쓰세요.
+`app/build/outputs/apk/debug/boss-planner-<버전>-debug.apk`가 만들어집니다. 이 파일을 파티원에게 보내 설치하면 됩니다(기기에서 "출처를 알 수 없는 앱 설치" 허용 필요). 디버그 키로 서명된 APK라 스토어에는 올릴 수 없고, 빌드한 컴퓨터가 바뀌면 서명이 달라져 기존 앱 위에 덮어 설치되지 않습니다. 계속 배포하려면 한 컴퓨터에서 빌드하거나 릴리스 서명 키를 따로 만들어 쓰세요.
 
 **폴더 구조**
 
@@ -367,6 +368,10 @@ functions/           Cloud Functions (TypeScript)
   test/rules/        Firestore 보안 규칙 테스트 (에뮬레이터)
   test/emulator/     파티·일정·정산·알림 통합 테스트 (에뮬레이터)
 firestore.rules      Firestore 보안 규칙
+version.properties   앱 버전 (versionName, versionCode)
+CHANGELOG.md         버전별 변경 기록
+scripts/             릴리스 노트 추출 스크립트
+.github/workflows/   버전이 바뀌면 태그와 릴리스를 만드는 워크플로
 ```
 
 **테스트**
@@ -376,6 +381,28 @@ cd functions
 npm test               # 단위 테스트
 npm run test:emulator  # 보안 규칙·통합 테스트 (Firestore 에뮬레이터, Java 필요)
 ```
+
+## 버전 관리
+
+현재 버전과 버전별 변경 내용은 [CHANGELOG.md](CHANGELOG.md)에 있습니다. 앱 홈 화면 맨 아래에도 설치된 버전이 표시됩니다.
+
+**번호 규칙** (`MAJOR.MINOR.PATCH`)
+
+| 자리 | 올리는 때 | 예 |
+| --- | --- | --- |
+| PATCH | 버그 수정, 문구·화면 다듬기 | 1.0.0 → 1.0.1 |
+| MINOR | 기능 추가. 이전 앱도 계속 쓸 수 있음 | 1.0.1 → 1.1.0 |
+| MAJOR | 이전 앱이 새 서버와 맞지 않게 되는 변경. 파티원 전원이 앱을 다시 설치해야 함 | 1.1.0 → 2.0.0 |
+
+**패치를 올리는 순서**
+
+1. [version.properties](version.properties)에서 `versionName`을 규칙대로 올리고 `versionCode`를 1 올립니다. `versionCode`가 커져야 기존 앱 위에 덮어 설치됩니다.
+2. [CHANGELOG.md](CHANGELOG.md) 맨 위에 `## <버전> - <날짜>` 항목을 추가하고 바뀐 내용, 서버 배포가 필요한지, 이전 앱과 호환되는지를 적습니다.
+3. 코드 변경과 함께 PR로 올려 `main`에 병합합니다.
+4. 병합되면 GitHub Actions가 `v<버전>` 태그와 GitHub 릴리스를 자동으로 만듭니다. 릴리스 노트는 CHANGELOG의 해당 항목입니다.
+5. 서버 변경이 있으면 Functions를 배포하고, APK를 빌드해 릴리스에 첨부하거나 파티원에게 보냅니다.
+
+`version.properties`를 고치지 않은 병합은 릴리스를 만들지 않습니다. 문서만 고친 경우처럼 버전을 올릴 필요가 없는 변경은 그대로 병합하면 됩니다.
 
 ## 출처
 
