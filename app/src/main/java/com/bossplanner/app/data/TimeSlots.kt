@@ -33,6 +33,9 @@ object TimeSlots {
     /** ms가 속한 KST 날짜의 00:00. 변경 요청 마감(전날 23:59) 계산에 쓴다. */
     fun startOfDay(ms: Long): Long = at(ms).toLocalDate().atStartOfDay(KST).toInstant().toEpochMilli()
 
+    /** 요일 번호: 1(월) ~ 7(일) */
+    fun weekday(ms: Long): Int = at(ms).dayOfWeek.value
+
     /** 하루 안에서 n번째 칸의 시작 시각 "HH:mm" */
     fun rowLabel(row: Int): String = "%02d:%02d".format(row / 2, (row % 2) * 30)
 }

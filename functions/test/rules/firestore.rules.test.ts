@@ -83,6 +83,18 @@ describe("users", () => {
     await assertFails(setDoc(doc(db(MEMBER), `users/${MEMBER}/busy/20261113-2030`), { partyId: "p1" }));
   });
 
+  it("고정 불가 시간은 본인만 읽고 쓴다", async () => {
+    const routine = { slots: ["D1-0900", "D1-0930"], updatedAt: serverTimestamp() };
+    await assertSucceeds(setDoc(doc(db(MEMBER), `users/${MEMBER}/private/routine`), routine));
+    await assertSucceeds(getDoc(doc(db(MEMBER), `users/${MEMBER}/private/routine`)));
+    await assertFails(getDoc(doc(db(LEADER), `users/${MEMBER}/private/routine`)));
+    await assertFails(setDoc(doc(db(LEADER), `users/${MEMBER}/private/routine`), routine));
+    await assertFails(setDoc(doc(db(MEMBER), `users/${MEMBER}/private/other`), routine));
+    await assertFails(
+      setDoc(doc(db(MEMBER), `users/${MEMBER}/private/routine`), { ...routine, slots: Array(337).fill("D1-0900") }),
+    );
+  });
+
   it("FCM 토큰은 본인만 접근한다", async () => {
     await assertSucceeds(setDoc(doc(db(MEMBER), `users/${MEMBER}/devices/d1`), { token: "t" }));
     await assertFails(getDoc(doc(db(LEADER), `users/${MEMBER}/devices/d1`)));

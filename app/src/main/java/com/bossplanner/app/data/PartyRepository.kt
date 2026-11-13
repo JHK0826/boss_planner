@@ -45,6 +45,15 @@ class PartyRepository(
             .limit(5)
             .listen(emptyList()) { snapshot -> snapshot.documents.mapNotNull(::toSchedule) }
 
+    /** 파티의 가장 최근 일정을 한 번만 읽는다. 없으면 null */
+    suspend fun latestScheduleOnce(partyId: String): Schedule? =
+        db.collection("parties").document(partyId).collection("schedules")
+            .orderBy("periodStart", Query.Direction.DESCENDING)
+            .limit(1)
+            .get()
+            .await()
+            .documents.firstOrNull()?.let(::toSchedule)
+
     fun schedule(partyId: String, periodId: String): Flow<Schedule?> = callbackFlow {
         val registration = scheduleRef(partyId, periodId).addSnapshotListener { snapshot, error ->
             trySend(if (error != null || snapshot == null || !snapshot.exists()) null else toSchedule(snapshot))

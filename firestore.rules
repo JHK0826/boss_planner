@@ -77,6 +77,16 @@ service cloud.firestore {
         allow read, write: if isSelf(uid);
       }
 
+      // 본인만 보는 설정. routine = 매주 반복되는 고정 불가 시간 (요일-시각 칸 목록)
+      match /private/{docId} {
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid)
+          && docId == 'routine'
+          && request.resource.data.keys().hasOnly(['slots', 'updatedAt'])
+          && request.resource.data.slots is list
+          && request.resource.data.slots.size() <= 336;
+      }
+
       // 확정된 레이드 시간. 확정 트랜잭션만 쓴다.
       match /busy/{slotId} {
         allow read: if isSelf(uid);

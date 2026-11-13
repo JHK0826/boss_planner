@@ -48,6 +48,7 @@ fun HomeScreen(
     onOpenParty: (partyId: String) -> Unit,
     onCreateParty: () -> Unit,
     onJoinParty: () -> Unit,
+    onEditRoutine: () -> Unit,
     onEditCharacters: () -> Unit,
     onEditApiKey: () -> Unit,
     onSignOut: () -> Unit,
@@ -99,6 +100,11 @@ fun HomeScreen(
                 Button(onClick = onCreateParty, modifier = Modifier.weight(1f)) { Text("파티 만들기") }
                 OutlinedButton(onClick = onJoinParty, modifier = Modifier.weight(1f)) { Text("코드로 가입") }
             }
+        }
+
+        item {
+            // 매주 반복되는 안 되는 시간을 저장해 두면 불가 시간표가 미리 채워진다.
+            OutlinedButton(onClick = onEditRoutine, modifier = Modifier.fillMaxWidth()) { Text("고정 불가 시간 설정") }
         }
 
         item { Text("내 캐릭터", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp)) }
