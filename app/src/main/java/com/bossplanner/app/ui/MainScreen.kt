@@ -27,6 +27,7 @@ private sealed interface Screen {
     data class PartyDetail(val partyId: String) : Screen
     data class EditUnavailable(val partyId: String, val target: UnavailableTarget) : Screen
     data class SettlementDetail(val partyId: String, val periodId: String) : Screen
+    data object Routine : Screen
 }
 
 /** 온보딩이 끝난 뒤의 화면들. 홈 → 파티 상세 → 불가 시간 입력 순으로 들어간다. */
@@ -84,6 +85,7 @@ fun MainScreen(
             onOpenParty = { screen = Screen.PartyDetail(it) },
             onCreateParty = { screen = Screen.CreateParty },
             onJoinParty = { screen = Screen.JoinParty },
+            onEditRoutine = { screen = Screen.Routine },
             onEditCharacters = onEditCharacters,
             onEditApiKey = onEditApiKey,
             onSignOut = onSignOut,
@@ -110,6 +112,7 @@ fun MainScreen(
             onBack = { screen = Screen.Home },
             parties = partyRepository,
         )
+        Screen.Routine -> RoutineScreen(uid = uid, onDone = { screen = Screen.Home })
         is Screen.SettlementDetail -> SettlementScreen(
             uid = uid,
             partyId = current.partyId,
@@ -121,6 +124,7 @@ fun MainScreen(
             uid = uid,
             partyId = current.partyId,
             target = current.target,
+            otherParties = parties.filter { it.id != current.partyId },
             onDone = { screen = Screen.PartyDetail(current.partyId) },
             parties = partyRepository,
         )
