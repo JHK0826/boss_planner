@@ -44,7 +44,12 @@ data class Schedule(
     val changeRequest: ChangeRequest?,
     val retryCount: Int,
     val expiredReason: String?,
+    /** 등록된 분배금. 아직 등록 전이면 null */
+    val settlement: Settlement?,
 ) {
+    /** 클리어했지만 분배금 정산이 끝나지 않았다 */
+    val settlementOpen: Boolean get() = state == "SETTLED" && settlement?.completed != true
+
     /** 불가 시간 입력·투표·확정을 받는 상태 (처음 조율 또는 미클리어 후 재조정) */
     val acceptsInput: Boolean get() = state == "OPEN" || state == "RETRY"
 }
@@ -54,6 +59,13 @@ data class Confirmed(val startMs: Long, val endMs: Long)
 data class ChangeRequest(val requestedBy: String, val reason: String, val status: String) {
     val isPending: Boolean get() = status == "PENDING"
 }
+
+data class Settlement(val sellerUid: String, val amountPerPerson: Long, val completed: Boolean)
+
+/** 받을 사람 한 명의 분배금 상태: PENDING(대기) → PAID(지급함) → RECEIVED(수령 확인) */
+data class SettlementEntry(val uid: String, val amount: Long, val status: String)
+
+data class ChatMessage(val id: String, val senderUid: String, val text: String, val createdAtMs: Long)
 
 /** 내 확정 일정 한 건 (여러 파티에 걸친 주간 시간표용) */
 data class Raid(

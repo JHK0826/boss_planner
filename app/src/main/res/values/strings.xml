@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">보스 스케줄 매니저</string>
+    <string name="notification_channel_id" translatable="false">schedule</string>
+    <string name="notification_channel_name">일정·정산 알림</string>
 </resources>

@@ -35,12 +35,65 @@ class PartyRepository(
         awaitClose { registration.remove() }
     }
 
-    /** 가장 최근 주기의 일정. 아직 첫 주기가 시작되지 않았으면 null */
-    fun latestSchedule(partyId: String): Flow<Schedule?> =
+    /**
+     * 최근 주기의 일정들 (최신순). 첫 번째가 이번 주기이고, 나머지는 정산이 덜 끝난 지난 주기를 찾는 데 쓴다.
+     * 아직 첫 주기가 시작되지 않았으면 빈 목록.
+     */
+    fun recentSchedules(partyId: String): Flow<List<Schedule>> =
         db.collection("parties").document(partyId).collection("schedules")
             .orderBy("periodStart", Query.Direction.DESCENDING)
-            .limit(1)
-            .listen(null) { snapshot -> snapshot.documents.firstOrNull()?.let(::toSchedule) }
+            .limit(5)
+            .listen(emptyList()) { snapshot -> snapshot.documents.mapNotNull(::toSchedule) }
+
+    fun schedule(partyId: String, periodId: String): Flow<Schedule?> = callbackFlow {
+        val registration = scheduleRef(partyId, periodId).addSnapshotListener { snapshot, error ->
+            trySend(if (error != null || snapshot == null || !snapshot.exists()) null else toSchedule(snapshot))
+        }
+        awaitClose { registration.remove() }
+    }
+
+    fun settlementEntries(partyId: String, periodId: String): Flow<List<SettlementEntry>> =
+        scheduleRef(partyId, periodId).collection("settlement").listen(emptyList()) { snapshot ->
+            snapshot.documents.map { doc ->
+                SettlementEntry(
+                    uid = doc.id,
+                    amount = doc.getLong("amount") ?: 0,
+                    status = doc.getString("status") ?: "PENDING",
+                )
+            }
+        }
+
+    fun messages(partyId: String, periodId: String): Flow<List<ChatMessage>> =
+        scheduleRef(partyId, periodId).collection("messages").orderBy("createdAt").listen(emptyList()) { snapshot ->
+            snapshot.documents.map { doc ->
+                ChatMessage(
+                    id = doc.id,
+                    senderUid = doc.getString("senderUid").orEmpty(),
+                    text = doc.getString("text").orEmpty(),
+                    // 방금 보낸 메시지는 서버 시각이 아직 없어서 추정값을 쓴다.
+                    createdAtMs = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        ?.toMillis() ?: 0,
+                )
+            }
+        }
+
+    suspend fun sendMessage(partyId: String, periodId: String, uid: String, text: String) {
+        scheduleRef(partyId, periodId).collection("messages")
+            .add(mapOf("senderUid" to uid, "text" to text, "createdAt" to FieldValue.serverTimestamp()))
+            .await()
+    }
+
+    suspend fun registerSettlement(partyId: String, periodId: String, amountPerPerson: Long) {
+        call("registerSettlement", mapOf("partyId" to partyId, "periodId" to periodId, "amountPerPerson" to amountPerPerson))
+    }
+
+    suspend fun markPaid(partyId: String, periodId: String, recipientUid: String) {
+        call("markPaid", mapOf("partyId" to partyId, "periodId" to periodId, "recipientUid" to recipientUid))
+    }
+
+    suspend fun confirmReceived(partyId: String, periodId: String) {
+        call("confirmReceived", mapOf("partyId" to partyId, "periodId" to periodId))
+    }
 
     fun unavailable(partyId: String, periodId: String): Flow<Map<String, Unavailable>> =
         scheduleRef(partyId, periodId).collection("unavailable").listen(emptyMap()) { snapshot ->
@@ -232,6 +285,13 @@ class PartyRepository(
             },
             retryCount = doc.getLong("retryCount")?.toInt() ?: 0,
             expiredReason = doc.getString("expiredReason"),
+            settlement = (doc.get("settlement") as? Map<*, *>)?.let { m ->
+                Settlement(
+                    sellerUid = m["sellerUid"] as? String ?: return@let null,
+                    amountPerPerson = (m["amountPerPerson"] as? Number)?.toLong() ?: 0,
+                    completed = m["completed"] as? Boolean ?: false,
+                )
+            },
         )
     }
 }

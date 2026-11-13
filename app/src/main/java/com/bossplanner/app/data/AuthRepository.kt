@@ -19,6 +19,8 @@ class AuthRepository(
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
+    val currentUid: String? get() = auth.currentUser?.uid
+
     suspend fun signIn(email: String, password: String) {
         auth.signInWithEmailAndPassword(email, password).await()
     }

@@ -65,14 +65,17 @@ fun PartyScreen(
     uid: String,
     partyId: String,
     onEditUnavailable: (UnavailableTarget) -> Unit,
+    onOpenSettlement: (periodId: String) -> Unit,
     onBack: () -> Unit,
     parties: PartyRepository = remember { PartyRepository() },
 ) {
     val partyState by remember(partyId) { parties.party(partyId).map { Loaded(it) } }
         .collectAsStateWithLifecycle(initialValue = null)
-    val scheduleState by remember(partyId) { parties.latestSchedule(partyId).map { Loaded(it) } }
+    val scheduleState by remember(partyId) { parties.recentSchedules(partyId).map { Loaded(it) } }
         .collectAsStateWithLifecycle(initialValue = null)
-    val schedule = scheduleState?.value
+    val schedule = scheduleState?.value?.firstOrNull()
+    // 다음 주기가 시작된 뒤에도 끝나지 않은 지난 주기 정산
+    val pastSettlements = scheduleState?.value.orEmpty().drop(1).filter { it.settlementOpen }
     val unavailable by remember(partyId, schedule?.id) {
         schedule?.let { parties.unavailable(partyId, it.id) } ?: flowOf(emptyMap())
     }.collectAsStateWithLifecycle(emptyMap())
@@ -194,6 +197,23 @@ fun PartyScreen(
                 },
             ) {
                 Text(if (unavailable[uid]?.submitted == true) "불가 시간 수정" else "불가 시간 입력")
+            }
+        }
+
+        if (schedule?.state == "SETTLED") {
+            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onOpenSettlement(schedule.id) }) {
+                Text(
+                    when {
+                        schedule.settlement == null -> "분배금 등록·정산 채팅"
+                        schedule.settlement.completed -> "정산 완료 · 내역 보기"
+                        else -> "분배금 정산 진행 중"
+                    },
+                )
+            }
+        }
+        pastSettlements.forEach { past ->
+            OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onOpenSettlement(past.id) }) {
+                Text("지난 주기 정산 (${past.confirmed?.let { TimeSlots.dateTime(it.startMs) } ?: past.id})")
             }
         }
 
