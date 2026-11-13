@@ -132,8 +132,7 @@ fun PartyScreen(
         TextButton(onClick = onBack, enabled = !busy) { Text("← 홈") }
         Text(party.name, style = MaterialTheme.typography.headlineSmall)
         Text(
-            "${party.bossName} · ${Bosses.difficultyLabel(party.difficulty)} · ${if (party.isWeekly) "주간" else "월간"} · " +
-                durationLabel(party.durationSlots * 30),
+            "${party.bossLabel}\n${if (party.isWeekly) "주간" else "월간"} · ${durationLabel(party.durationMinutes)}",
             style = MaterialTheme.typography.bodyMedium,
         )
 

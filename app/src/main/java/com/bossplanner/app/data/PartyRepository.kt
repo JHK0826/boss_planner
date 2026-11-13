@@ -158,8 +158,7 @@ class PartyRepository(
                     Raid(
                         partyId = doc.getString("partyId") ?: return@mapNotNull null,
                         partyName = doc.getString("partyName").orEmpty(),
-                        bossName = doc.getString("bossName").orEmpty(),
-                        difficulty = doc.getString("difficulty").orEmpty(),
+                        bosses = toBosses(doc),
                         startMs = doc.getTimestamp("start")?.toMillis() ?: return@mapNotNull null,
                         endMs = doc.getTimestamp("end")?.toMillis() ?: return@mapNotNull null,
                     )
@@ -173,21 +172,34 @@ class PartyRepository(
             .await()
     }
 
-    /** @return 새 파티 ID */
+    /** 파티로 갈 수 있는 보스 목록과 소요 시간 기준 */
+    suspend fun getBossCatalog(): BossCatalog {
+        val result = call("getBossCatalog", emptyMap())
+        return BossCatalog(
+            bosses = (result["bosses"] as? List<*>).orEmpty().mapNotNull { item ->
+                val boss = item as? Map<*, *> ?: return@mapNotNull null
+                BossCatalogEntry(
+                    name = boss["name"] as? String ?: return@mapNotNull null,
+                    difficulties = (boss["difficulties"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                    monthly = boss["cycle"] == "MONTHLY",
+                )
+            },
+            minutesPerBoss = (result["minutesPerBoss"] as? Number)?.toInt() ?: 20,
+            maxDurationMinutes = (result["maxDurationMinutes"] as? Number)?.toInt() ?: 240,
+        )
+    }
+
+    /** 주기(주간/월간)는 고른 보스에 따라 서버가 정한다. @return 새 파티 ID */
     suspend fun createParty(
         name: String,
-        bossName: String,
-        difficulty: String,
-        cycle: String,
+        bosses: List<PartyBoss>,
         durationMinutes: Int,
         characterId: String,
     ): String = call(
         "createParty",
         mapOf(
             "name" to name,
-            "bossName" to bossName,
-            "difficulty" to difficulty,
-            "cycle" to cycle,
+            "bosses" to bosses.map { mapOf("name" to it.name, "difficulty" to it.difficulty) },
             "durationMinutes" to durationMinutes,
             "characterId" to characterId,
         ),
@@ -233,15 +245,15 @@ class PartyRepository(
                 characterName = m["characterName"] as? String ?: "",
                 job = m["job"] as? String ?: "",
                 level = (m["level"] as? Number)?.toInt() ?: 0,
+                characterId = m["characterId"] as? String ?: "",
             )
         }.toMap()
         return Party(
             id = doc.id,
             name = doc.getString("name").orEmpty(),
-            bossName = doc.getString("bossName").orEmpty(),
-            difficulty = doc.getString("difficulty").orEmpty(),
+            bosses = toBosses(doc),
             cycle = doc.getString("cycle") ?: "WEEKLY",
-            durationSlots = doc.getLong("durationSlots")?.toInt() ?: 2,
+            durationMinutes = doc.getLong("durationMinutes")?.toInt() ?: ((doc.getLong("durationSlots")?.toInt() ?: 2) * 30),
             leaderUid = doc.getString("leaderUid").orEmpty(),
             memberUids = (doc.get("memberUids") as? List<*>)?.filterIsInstance<String>().orEmpty(),
             members = members,
@@ -249,6 +261,15 @@ class PartyRepository(
             scheduleStarted = doc.getBoolean("scheduleStarted") ?: false,
         )
     }
+
+    private fun toBosses(doc: DocumentSnapshot): List<PartyBoss> =
+        (doc.get("bosses") as? List<*>).orEmpty().mapNotNull { item ->
+            val boss = item as? Map<*, *> ?: return@mapNotNull null
+            PartyBoss(
+                name = boss["name"] as? String ?: return@mapNotNull null,
+                difficulty = boss["difficulty"] as? String ?: "",
+            )
+        }
 
     private fun toSchedule(doc: DocumentSnapshot): Schedule? {
         val start = doc.getTimestamp("periodStart")?.toMillis() ?: return null
