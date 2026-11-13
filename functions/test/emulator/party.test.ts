@@ -26,9 +26,7 @@ async function addUser(uid: string) {
 
 const partyInput = (uid: string, extra: Record<string, unknown> = {}) => ({
   name: "스우팟",
-  bossName: "스우",
-  difficulty: "HARD",
-  cycle: "WEEKLY",
+  bosses: [{ name: "스우", difficulty: "HARD" }],
   durationMinutes: 60,
   characterId: `char-${uid}`,
   ...extra,
@@ -83,7 +81,15 @@ describe("createParty", () => {
     const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
 
     const party = (await db.doc(`parties/${partyId}`).get()).data()!;
-    expect(party).toMatchObject({ leaderUid: "a", memberUids: ["a"], durationSlots: 2, scheduleStarted: true });
+    expect(party).toMatchObject({
+      leaderUid: "a",
+      memberUids: ["a"],
+      bosses: [{ name: "스우", difficulty: "HARD" }],
+      cycle: "WEEKLY",
+      durationMinutes: 60,
+      durationSlots: 2,
+      scheduleStarted: true,
+    });
     expect(party.members.a).toMatchObject({ characterName: "캐릭-a", level: 280 });
     expect(JSON.stringify(party)).not.toContain("ocid");
     expect(inviteCode).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
@@ -108,9 +114,119 @@ describe("createParty", () => {
     await expect(createParty(db, "a", partyInput("a", { durationMinutes: 45 }), THU)).rejects.toMatchObject({
       code: "invalid-argument",
     });
-    await expect(createParty(db, "a", partyInput("a", { cycle: "DAILY" }), THU)).rejects.toMatchObject({
+    await expect(createParty(db, "a", partyInput("a", { durationMinutes: 10 }), THU)).rejects.toMatchObject({
       code: "invalid-argument",
     });
+  });
+
+  it("목록에 없는 보스(시즌 보스 포함), 없는 난이도, 주간·월간 혼합은 거절한다", async () => {
+    const withBosses = (bosses: unknown) => createParty(db, "a", partyInput("a", { bosses }), THU);
+    const reason = (value: string) => ({ code: "invalid-argument", details: { reason: value } });
+
+    await expect(withBosses([])).rejects.toMatchObject(reason("empty"));
+    await expect(withBosses([{ name: "시즌 보스 메이린", difficulty: "HARD" }])).rejects.toMatchObject(reason("unknown-boss"));
+    await expect(withBosses([{ name: "스우", difficulty: "CHAOS" }])).rejects.toMatchObject(reason("bad-difficulty"));
+    await expect(
+      withBosses([{ name: "스우", difficulty: "HARD" }, { name: "스우", difficulty: "NORMAL" }]),
+    ).rejects.toMatchObject(reason("duplicate"));
+    await expect(
+      withBosses([{ name: "스우", difficulty: "HARD" }, { name: "검은 마법사", difficulty: "HARD" }]),
+    ).rejects.toMatchObject(reason("mixed-cycle"));
+  });
+
+  it("여러 보스를 묶을 수 있고, 주기는 보스에서 정해진다", async () => {
+    const bundle = await createParty(
+      db,
+      "a",
+      partyInput("a", {
+        bosses: [{ name: "발드릭스", difficulty: "HARD" }, { name: "벨로나", difficulty: "HARD" }],
+        durationMinutes: 40,
+      }),
+      THU,
+    );
+    expect((await db.doc(`parties/${bundle.partyId}`).get()).data()).toMatchObject({
+      bosses: [{ name: "발드릭스", difficulty: "HARD" }, { name: "벨로나", difficulty: "HARD" }],
+      cycle: "WEEKLY",
+      durationMinutes: 40,
+      durationSlots: 2,
+    });
+
+    // 클라이언트가 보낸 cycle은 믿지 않는다. 검은 마법사는 월간이다.
+    const monthly = await createParty(
+      db,
+      "b",
+      partyInput("b", { bosses: [{ name: "검은 마법사", difficulty: "HARD" }], cycle: "WEEKLY" }),
+      THU,
+    );
+    expect((await db.doc(`parties/${monthly.partyId}`).get()).get("cycle")).toBe("MONTHLY");
+  });
+});
+
+describe("같은 캐릭터의 보스 중복", () => {
+  const bundle = [{ name: "발드릭스", difficulty: "HARD" }, { name: "벨로나", difficulty: "HARD" }];
+  const duplicate = (...bosses: string[]) => ({ code: "failed-precondition", details: { reason: "duplicate-boss", bosses } });
+
+  it("묶음 파티에 넣은 캐릭터로는 그 보스가 들어간 파티를 또 만들 수 없다", async () => {
+    await createParty(db, "a", partyInput("a", { bosses: bundle, durationMinutes: 40 }), THU);
+
+    await expect(
+      createParty(db, "a", partyInput("a", { bosses: [{ name: "벨로나", difficulty: "NORMAL" }] }), THU),
+    ).rejects.toMatchObject(duplicate("벨로나"));
+    await expect(
+      createParty(db, "a", partyInput("a", { bosses: [{ name: "스우", difficulty: "HARD" }, ...bundle] }), THU),
+    ).rejects.toMatchObject(duplicate("발드릭스", "벨로나"));
+
+    // 겹치지 않는 보스는 만들 수 있다.
+    await createParty(db, "a", partyInput("a"), THU);
+  });
+
+  it("다른 캐릭터로는 같은 보스 파티를 만들 수 있다", async () => {
+    await db.doc("secrets/a").update({
+      "characters.char-a2": { ocid: "ocid-a2", name: "부캐", world: "스카니아", job: "히어로", level: 260 },
+    });
+    await createParty(db, "a", partyInput("a", { bosses: bundle }), THU);
+    await createParty(db, "a", { ...partyInput("a", { bosses: bundle }), characterId: "char-a2" }, THU);
+  });
+
+  it("가입할 때도 같은 캐릭터의 보스 중복을 막는다", async () => {
+    await createParty(db, "b", partyInput("b", { bosses: bundle }), THU);
+    const other = await createParty(db, "a", partyInput("a", { bosses: [{ name: "벨로나", difficulty: "EASY" }] }), THU);
+
+    await expect(join("b", other.inviteCode, THU)).rejects.toMatchObject(duplicate("벨로나"));
+    await join("c", other.inviteCode, THU);
+  });
+
+  it("파티에서 나가면 그 보스로 다시 만들 수 있다", async () => {
+    const first = await createParty(db, "a", partyInput("a", { bosses: bundle }), THU);
+    await leaveParty(db, "a", { partyId: first.partyId }, THU);
+    await createParty(db, "a", partyInput("a", { bosses: bundle }), THU);
+  });
+});
+
+describe("소요 시간", () => {
+  it("20분 단위 소요 시간은 30분 칸에서 시작하고, 끝나는 시각은 실제 소요 시간으로 잡는다", async () => {
+    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a", { durationMinutes: 20 }), THU);
+    await join("b", inviteCode, THU);
+    await submit(partyId, "a", allExcept("20261114", 20, 21));
+    await submit(partyId, "b", []);
+    await evaluateSchedule(db, partyId, PERIOD, THU);
+
+    const result = (await schedule(partyId))!;
+    expect(result).toMatchObject({ durationMinutes: 20, durationSlots: 1 });
+    // 20분짜리는 30분 칸 하나씩: 20:00~20:20, 20:30~20:50
+    expect(result.candidates.map((c: { slotId: string }) => c.slotId)).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(result.candidates[0].end.toMillis() - result.candidates[0].start.toMillis()).toBe(20 * 60 * 1000);
+  });
+
+  it("40분은 30분 칸 두 개가 비어 있어야 한다", async () => {
+    const { partyId } = await createParty(db, "a", partyInput("a", { durationMinutes: 40 }), THU);
+    // 20:00~20:30만 비면 부족하고, 21:00~22:00은 충분하다.
+    await submit(partyId, "a", allExcept("20261114", 21, 22).filter((slot) => slot !== "20261114-2000"));
+    await evaluateSchedule(db, partyId, PERIOD, THU);
+
+    const result = (await schedule(partyId))!;
+    expect(result.candidates.map((c: { slotId: string }) => c.slotId)).toEqual(["20261114-2100"]);
+    expect(result.candidates[0].end.toMillis() - result.candidates[0].start.toMillis()).toBe(40 * 60 * 1000);
   });
 });
 

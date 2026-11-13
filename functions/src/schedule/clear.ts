@@ -3,7 +3,8 @@ import type { SecretCharacter } from "../characters";
 import { toSecretCharacters } from "../characters";
 import { CHARACTER_LIST_TTL_MS } from "../config";
 import { SLOT_MS, kstDateString } from "../domain/time";
-import { NexonClient, bossCompleted } from "../nexon/client";
+import { bossesOf } from "../domain/bosses";
+import { NexonClient, allBossesCompleted } from "../nexon/client";
 import { releaseBusy } from "./confirm";
 import { evaluateSchedule } from "./evaluate";
 import { resetFields, type Confirmed } from "./model";
@@ -69,6 +70,7 @@ export async function resolveRaidResult(
 
 /**
  * 파티원들의 API Key로 스케줄러 API를 불러 보스 클리어 여부를 확인한다.
+ * 묶음 파티는 묶은 보스를 모두 클리어해야 클리어다.
  * 한 명이라도 클리어로 나오면 true, 확인된 사람이 모두 미클리어면 false, 아무도 확인하지 못하면 null.
  * date는 레이드 날짜로 지정한다(목요일 초기화 뒤에도 수요일 레이드를 확인하기 위함).
  */
@@ -87,7 +89,7 @@ export async function checkClearByApi(
     if (!secret?.apiKey || !ocid) continue;
     try {
       const contents = await makeClient(secret.apiKey as string).getBossContents(ocid, date);
-      const result = bossCompleted(contents, party.bossName as string, party.difficulty as string);
+      const result = allBossesCompleted(contents, bossesOf(party));
       if (result === true) return true;
       if (result === false) sawNotCleared = true;
     } catch {

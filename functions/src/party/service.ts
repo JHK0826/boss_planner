@@ -2,12 +2,28 @@ import { randomInt } from "node:crypto";
 import { FieldValue, Timestamp, type DocumentData, type DocumentSnapshot, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
 import type { SecretCharacter } from "../characters";
+import {
+  MAX_BOSSES_PER_PARTY,
+  MINUTES_PER_BOSS,
+  bossesOf,
+  validateBossSelection,
+  type PartyBoss,
+} from "../domain/bosses";
 import { currentPeriod, isCycleStartDay, type Cycle } from "../domain/time";
 import { evaluateSchedule } from "../schedule/evaluate";
-import { newScheduleData } from "../schedule/model";
+import { newScheduleData, slotsForMinutes } from "../schedule/model";
 
 export const MAX_PARTY_SIZE = 6;
-export const DIFFICULTIES = ["EASY", "NORMAL", "HARD", "CHAOS", "EXTREME"] as const;
+export const MAX_DURATION_MINUTES = MAX_BOSSES_PER_PARTY * MINUTES_PER_BOSS;
+
+const BOSS_ERRORS: Record<string, string> = {
+  empty: "보스를 하나 이상 골라 주세요.",
+  "too-many": `한 파티에 묶을 수 있는 보스는 ${MAX_BOSSES_PER_PARTY}개까지입니다.`,
+  "unknown-boss": "파티로 갈 수 없는 보스가 들어 있습니다.",
+  "bad-difficulty": "보스에 없는 난이도입니다.",
+  duplicate: "같은 보스를 두 번 넣을 수 없습니다.",
+  "mixed-cycle": "주간 보스와 월간 보스는 한 파티에 묶을 수 없습니다.",
+};
 /** 헷갈리는 글자(0/O, 1/I)를 뺀 초대 코드 문자 */
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH = 6;
@@ -44,6 +60,33 @@ async function loadMember(db: Firestore, uid: string, characterId: string): Prom
     world: character.world,
     joinedAt: Timestamp.now(),
   };
+}
+
+/**
+ * 같은 캐릭터가 같은 보스를 두 파티에서 잡지 못하게 막는다. 보스는 캐릭터당 주기에 한 번만
+ * 클리어할 수 있으므로 난이도가 달라도 같은 보스로 본다.
+ * (예: 발드릭스+벨로나 묶음 파티에 넣은 캐릭터는 벨로나 파티를 또 만들거나 가입할 수 없다.)
+ */
+async function assertNoBossOverlap(
+  db: Firestore,
+  uid: string,
+  characterId: string,
+  bosses: PartyBoss[],
+  exceptPartyId: string | null,
+): Promise<void> {
+  const names = new Set(bosses.map((boss) => boss.name));
+  const mine = await db.collection("parties").where("memberUids", "array-contains", uid).get();
+  for (const party of mine.docs) {
+    if (party.id === exceptPartyId || party.get(`members.${uid}.characterId`) !== characterId) continue;
+    const overlap = bossesOf(party.data()).map((boss) => boss.name).filter((name) => names.has(name));
+    if (overlap.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `이 캐릭터는 이미 '${party.get("name") as string}' 파티에서 ${overlap.join(", ")}을(를) 잡습니다. 같은 보스를 두 파티에서 잡을 수 없습니다.`,
+        { reason: "duplicate-boss", bosses: overlap, partyId: party.id },
+      );
+    }
+  }
 }
 
 /**
@@ -84,31 +127,30 @@ export interface CreatePartyResult {
 
 export async function createParty(db: Firestore, uid: string, data: Data, nowMs: number): Promise<CreatePartyResult> {
   const name = text(data, "name", 20);
-  const bossName = text(data, "bossName", 30);
   const characterId = text(data, "characterId", 64);
-  const difficulty = data?.difficulty;
-  const cycle = data?.cycle;
   const durationMinutes = data?.durationMinutes;
-  if (!DIFFICULTIES.includes(difficulty as (typeof DIFFICULTIES)[number])) {
-    throw new HttpsError("invalid-argument", "난이도가 올바르지 않습니다.", { field: "difficulty" });
+
+  const selection = validateBossSelection(data?.bosses);
+  if (!selection.ok) {
+    throw new HttpsError("invalid-argument", BOSS_ERRORS[selection.reason], { field: "bosses", reason: selection.reason });
   }
-  if (cycle !== "WEEKLY" && cycle !== "MONTHLY") {
-    throw new HttpsError("invalid-argument", "주기가 올바르지 않습니다.", { field: "cycle" });
-  }
+  const { bosses, cycle } = selection;
   if (
     typeof durationMinutes !== "number" ||
     !Number.isInteger(durationMinutes) ||
-    durationMinutes % 30 !== 0 ||
-    durationMinutes < 30 ||
-    durationMinutes > 180
+    durationMinutes % 10 !== 0 ||
+    durationMinutes < MINUTES_PER_BOSS ||
+    durationMinutes > MAX_DURATION_MINUTES
   ) {
-    throw new HttpsError("invalid-argument", "소요 시간은 30분 단위로 30~180분이어야 합니다.", {
-      field: "durationMinutes",
-    });
+    throw new HttpsError(
+      "invalid-argument",
+      `소요 시간은 10분 단위로 ${MINUTES_PER_BOSS}~${MAX_DURATION_MINUTES}분이어야 합니다.`,
+      { field: "durationMinutes" },
+    );
   }
 
   const member = await loadMember(db, uid, characterId);
-  const durationSlots = durationMinutes / 30;
+  await assertNoBossOverlap(db, uid, characterId, bosses, null);
   const startsNow = isCycleStartDay(cycle, nowMs);
   const period = currentPeriod(cycle, nowMs);
   const partyRef = db.collection("parties").doc();
@@ -121,10 +163,10 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
       tx.create(codeRef, { partyId: partyRef.id });
       tx.create(partyRef, {
         name,
-        bossName,
-        difficulty,
+        bosses,
         cycle,
-        durationSlots,
+        durationMinutes,
+        durationSlots: slotsForMinutes(durationMinutes),
         leaderUid: uid,
         memberUids: [uid],
         members: { [uid]: member },
@@ -133,7 +175,7 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
         scheduleStarted: startsNow,
         createdAt: Timestamp.now(),
       });
-      if (startsNow) tx.create(partyRef.collection("schedules").doc(period.id), newScheduleData(period, durationSlots));
+      if (startsNow) tx.create(partyRef.collection("schedules").doc(period.id), newScheduleData(period, durationMinutes));
       return true;
     });
     if (created) return { partyId: partyRef.id, inviteCode };
@@ -151,6 +193,8 @@ export async function joinParty(db: Firestore, uid: string, data: Data, nowMs: n
 
   const member = await loadMember(db, uid, characterId);
   const partyRef = db.doc(`parties/${partyId}`);
+  const target = (await partyRef.get()).data();
+  if (target) await assertNoBossOverlap(db, uid, characterId, bossesOf(target), partyId);
 
   const periodId = await db.runTransaction(async (tx) => {
     const partySnap = await tx.get(partyRef);

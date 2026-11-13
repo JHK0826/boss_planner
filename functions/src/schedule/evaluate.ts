@@ -44,6 +44,7 @@ export async function evaluateSchedule(
       totalSlots: ((schedule.periodEnd as Timestamp).toMillis() - (schedule.periodStart as Timestamp).toMillis()) / SLOT_MS,
     };
     const durationSlots = schedule.durationSlots as number;
+    const durationMs = ((schedule.durationMinutes as number | undefined) ?? durationSlots * 30) * 60 * 1000;
     const round = (schedule.round as number) ?? 0;
     const candidates = (schedule.candidates as Candidate[]) ?? [];
 
@@ -132,7 +133,7 @@ export async function evaluateSchedule(
     const next: Candidate[] = starts.map((index) => ({
       slotId: slotIdFromMs(slotMs(period, index)),
       start: Timestamp.fromMillis(slotMs(period, index)),
-      end: Timestamp.fromMillis(slotMs(period, index + durationSlots)),
+      end: Timestamp.fromMillis(slotMs(period, index) + durationMs),
     }));
     tx.update(scheduleRef, {
       candidates: next,
