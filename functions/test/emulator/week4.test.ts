@@ -124,6 +124,56 @@ describe("분배금 정산", () => {
     expect((await schedule()).settlement.completedAt).not.toBeNull();
   });
 
+  it("경매장 판매액과 수수료로 파티원별 정산금을 계산해 등록한다", async () => {
+    await seed();
+    expect(await registerSettlement(db, "b", { ...REF, saleAmount: 100_000_000, feePercent: 3 })).toEqual({ recipients: 2 });
+
+    // 실수령 97,000,000 ÷ (0.97 + 2) = 32,659,932.6… → 32,659,900
+    const settlement = (await schedule()).settlement;
+    expect(settlement).toMatchObject({
+      sellerUid: "b",
+      saleAmount: 100_000_000,
+      feePercent: 3,
+      netAmount: 97_000_000,
+      amounts: { a: 32_659_900, c: 32_659_900 },
+      sellerAmount: 97_000_000 - 2 * 32_659_900,
+      amountPerPerson: 32_659_900,
+      weights: { a: 1, b: 1, c: 1 },
+    });
+    expect((await scheduleRef().collection("settlement").doc("c").get()).data()).toMatchObject({
+      amount: 32_659_900,
+      status: "PENDING",
+    });
+  });
+
+  it("상세 비율을 주면 사람마다 정산금이 달라진다", async () => {
+    await seed();
+    await registerSettlement(db, "b", { ...REF, saleAmount: 100_000_000, feePercent: 5, weights: { a: 2 } });
+
+    const settlement = (await schedule()).settlement;
+    expect(settlement.weights).toEqual({ a: 2, b: 1, c: 1 });
+    expect(settlement.amounts.a).toBe(settlement.amounts.c * 2 + (settlement.amounts.a - settlement.amounts.c * 2));
+    expect(settlement.amounts.a / settlement.amounts.c).toBeCloseTo(2, 4);
+    // 금액이 서로 다르면 1인 금액은 비워 둔다.
+    expect(settlement.amountPerPerson).toBeNull();
+    expect((await scheduleRef().collection("settlement").doc("a").get()).get("amount")).toBe(settlement.amounts.a);
+  });
+
+  it("잘못된 판매액, 수수료, 비율은 거절한다", async () => {
+    await seed();
+    const register = (extra: Record<string, unknown>) =>
+      registerSettlement(db, "b", { ...REF, saleAmount: 100_000_000, feePercent: 3, ...extra });
+    for (const bad of [{ saleAmount: 0 }, { saleAmount: 1.5 }, { saleAmount: 2_000_000_000_000 }, { feePercent: 4 }, { feePercent: "3" }]) {
+      await expect(register(bad)).rejects.toMatchObject({ code: "invalid-argument" });
+    }
+    for (const weights of [{ a: 0 }, { a: 101 }, { a: 1.5 }, { a: "2" }]) {
+      await expect(register({ weights })).rejects.toMatchObject({ code: "invalid-argument", details: { field: "weights" } });
+    }
+    // 판매액이 너무 적어 정산금이 0이 되는 경우
+    await expect(register({ saleAmount: 100 })).rejects.toMatchObject({ code: "invalid-argument" });
+    expect((await schedule()).settlement).toBeNull();
+  });
+
   it("받을 사람이 없는 1인 파티는 등록과 동시에 완료된다", async () => {
     await seed("SETTLED", ["a"]);
     expect(await registerSettlement(db, "a", { ...REF, amountPerPerson: 100 })).toEqual({ recipients: 0 });

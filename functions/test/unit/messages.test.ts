@@ -86,10 +86,21 @@ describe("scheduleNotifications", () => {
 
   it("분배금이 등록되면 받을 사람에게, 정산이 끝나면 전원에게 알린다", () => {
     const settled = { ...base, state: "SETTLED", confirmed };
-    const registered = { ...settled, settlement: { sellerUid: "b", amountPerPerson: 5000000, completed: false } };
+    const registered = {
+      ...settled,
+      settlement: { sellerUid: "b", saleAmount: 20000000, feePercent: 3, amounts: { a: 5000000, c: 7000000 }, completed: false },
+    };
+    // 사람마다 정산금이 다를 수 있어 한 명씩 자기 금액을 받는다.
     expect(notify(settled, registered)).toMatchObject([
-      { uids: ["a", "c"], body: expect.stringContaining("비숍님이 분배금 1인 5,000,000메소를 등록") },
+      { uids: ["a"], body: expect.stringContaining("비숍님이 분배금을 등록했습니다. 내 정산금은 5,000,000메소") },
+      { uids: ["c"], body: expect.stringContaining("내 정산금은 7,000,000메소") },
     ]);
+    // 금액을 고쳐 다시 등록하면 다시 알린다.
+    const changed = { ...registered, settlement: { ...registered.settlement, amounts: { a: 6000000, c: 6000000 } } };
+    expect(notify(registered, changed)).toHaveLength(2);
+    // 0.2.0 이하 앱이 등록한 형식(1인 금액만 있음)도 알린다.
+    const legacy = { ...settled, settlement: { sellerUid: "b", amountPerPerson: 100, completed: false } };
+    expect(notify(settled, legacy)).toMatchObject([{ uids: ["a"] }, { uids: ["c"] }]);
     const completed = { ...registered, settlement: { ...registered.settlement, completed: true } };
     expect(notify(registered, completed)).toMatchObject([{ uids: ["a", "b", "c"], body: expect.stringContaining("정산이 완료") }]);
     expect(notify(completed, { ...completed, updatedAt: 2 })).toEqual([]);
@@ -113,6 +124,8 @@ describe("그 밖의 알림", () => {
       { uids: ["a", "b"], body: "캐릭씨: 계좌로 주세요" },
     ]);
     expect(messageNotification(party, "c", "가".repeat(200))[0].body.length).toBeLessThan(100);
+    expect(messageNotification(party, "c", "", true)[0].body).toBe("캐릭씨: 사진을 보냈습니다.");
+    expect(messageNotification(party, "c", "정산표", true)[0].body).toBe("캐릭씨: (사진) 정산표");
   });
 
   it("미입력자에게 입력 요청을, 파티장에게 미입력자 알림을 보낸다", () => {
