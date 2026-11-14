@@ -84,7 +84,10 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.functions)
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.storage)
     implementation(libs.coroutines.play.services)
 
     implementation(libs.coil.compose)
+
+    testImplementation(libs.junit)
 }

@@ -28,8 +28,6 @@ object TimeSlots {
     /** "11/14(토) 20:00 ~ 21:00" */
     fun range(startMs: Long, endMs: Long): String = "${dateTime(startMs)} ~ ${time(endMs)}"
 
-    fun meso(amount: Long): String = "%,d메소".format(amount)
-
     /** ms가 속한 KST 날짜의 00:00. 변경 요청 마감(전날 23:59) 계산에 쓴다. */
     fun startOfDay(ms: Long): Long = at(ms).toLocalDate().atStartOfDay(KST).toInstant().toEpochMilli()
 

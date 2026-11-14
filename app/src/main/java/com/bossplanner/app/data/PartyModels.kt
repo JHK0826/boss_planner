@@ -58,18 +58,38 @@ data class Schedule(
     val acceptsInput: Boolean get() = state == "OPEN" || state == "RETRY"
 }
 
-data class Confirmed(val startMs: Long, val endMs: Long)
+/** memberUids: 확정 당시 파티원 = 이 레이드에 참여한 사람 */
+data class Confirmed(val startMs: Long, val endMs: Long, val memberUids: List<String>)
 
 data class ChangeRequest(val requestedBy: String, val reason: String, val status: String) {
     val isPending: Boolean get() = status == "PENDING"
 }
 
-data class Settlement(val sellerUid: String, val amountPerPerson: Long, val completed: Boolean)
+/**
+ * 등록된 분배금.
+ * saleAmount·feePercent·netAmount는 경매장 판매액으로 등록했을 때만 있다.
+ * amountPerPerson은 받는 사람 모두 같은 금액일 때만 있다.
+ */
+data class Settlement(
+    val sellerUid: String,
+    val saleAmount: Long?,
+    val feePercent: Int?,
+    val netAmount: Long?,
+    val amountPerPerson: Long?,
+    val completed: Boolean,
+)
 
 /** 받을 사람 한 명의 분배금 상태: PENDING(대기) → PAID(지급함) → RECEIVED(수령 확인) */
 data class SettlementEntry(val uid: String, val amount: Long, val status: String)
 
-data class ChatMessage(val id: String, val senderUid: String, val text: String, val createdAtMs: Long)
+data class ChatMessage(
+    val id: String,
+    val senderUid: String,
+    val text: String,
+    val createdAtMs: Long,
+    /** 첨부한 이미지 주소. 없으면 null */
+    val imageUrl: String?,
+)
 
 /** 내 확정 일정 한 건 (여러 파티에 걸친 주간 시간표용) */
 data class Raid(
