@@ -145,12 +145,17 @@ service cloud.firestore {
 
         match /messages/{messageId} {
           allow read: if isMember(partyId);
+          // 글이나 이미지 중 하나는 있어야 한다. 이미지는 Firebase Storage에 올린 것만 받는다.
           allow create: if isMember(partyId)
-            && request.resource.data.keys().hasOnly(['senderUid', 'text', 'createdAt'])
+            && request.resource.data.keys().hasOnly(['senderUid', 'text', 'createdAt', 'imageUrl'])
             && request.resource.data.senderUid == request.auth.uid
             && request.resource.data.text is string
-            && request.resource.data.text.size() > 0
             && request.resource.data.text.size() <= 500
+            && (request.resource.data.text.size() > 0 || 'imageUrl' in request.resource.data)
+            && (!('imageUrl' in request.resource.data)
+                || (request.resource.data.imageUrl is string
+                    && request.resource.data.imageUrl.size() <= 2000
+                    && request.resource.data.imageUrl.matches('https://firebasestorage[.]googleapis[.]com/.*')))
             && request.resource.data.createdAt == request.time;
           allow update, delete: if false;
         }

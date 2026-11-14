@@ -105,8 +105,9 @@ export const onMessageCreate = onDocumentCreated(
     const db = getFirestore();
     const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());
     const senderUid = event.data?.get("senderUid") as string | undefined;
-    const text = event.data?.get("text") as string | undefined;
-    if (!party || !senderUid || !text) return;
-    await sendPushes(db, messageNotification(party, senderUid, text));
+    const text = (event.data?.get("text") as string | undefined) ?? "";
+    const hasImage = typeof event.data?.get("imageUrl") === "string";
+    if (!party || !senderUid || (!text && !hasImage)) return;
+    await sendPushes(db, messageNotification(party, senderUid, text, hasImage));
   },
 );

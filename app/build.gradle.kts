@@ -77,6 +77,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons)
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(platform(libs.firebase.bom))
@@ -84,7 +85,10 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.functions)
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.storage)
     implementation(libs.coroutines.play.services)
 
     implementation(libs.coil.compose)
+
+    testImplementation(libs.junit)
 }

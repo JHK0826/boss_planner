@@ -34,7 +34,7 @@ export function newScheduleData(period: Period, durationMinutes: number): Docume
     confirmedAt: null,
     // 일정 변경 요청: { requestedBy, reason, requestedAt, status: PENDING | APPROVED | REJECTED }
     changeRequest: null,
-    // 분배금: { sellerUid, amountPerPerson, registeredAt, completed, completedAt }
+    // 분배금: { sellerUid, saleAmount, feePercent, netAmount, sellerAmount, weights, amounts, registeredAt, completed, completedAt }
     settlement: null,
     retryCount: 0,
     clearedBy: null,

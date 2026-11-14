@@ -2,10 +2,11 @@ import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
 import { requireString } from "../schedule/confirm";
 import type { Confirmed } from "../schedule/model";
+import { FEE_PERCENTS, MAX_SALE_AMOUNT, MAX_WEIGHT, computeSettlement } from "./calc";
 
 type Data = Record<string, unknown> | undefined | null;
 
-/** 메소 최대 입력값. 실수로 자릿수를 더 넣는 것을 막는 용도다. */
+/** 1인 금액을 직접 넣던 예전 방식의 최대값 */
 export const MAX_AMOUNT = 1_000_000_000_000;
 
 function refs(db: Firestore, data: Data) {
@@ -15,19 +16,87 @@ function refs(db: Firestore, data: Data) {
   return { scheduleRef, settlementRef: scheduleRef.collection("settlement") };
 }
 
+interface Plan {
+  amounts: Record<string, number>;
+  /** 일정 문서의 settlement에 함께 저장할 계산 근거 */
+  summary: Record<string, unknown>;
+}
+
 /**
- * 드롭 아이템을 판매한 파티원이 1인 분배금을 등록한다.
+ * 요청 값을 검사해 "받을 사람별 정산금"을 정하는 함수를 돌려준다.
+ * 참여자 목록은 트랜잭션 안에서 읽으므로 계산은 그때 한다.
+ */
+function planner(uid: string, data: Data): (participants: string[]) => Plan {
+  // 0.2.0 이하 앱: 1인 금액을 직접 넣는 방식
+  if (data?.saleAmount === undefined && data?.amountPerPerson !== undefined) {
+    const amount = data.amountPerPerson;
+    if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0 || amount > MAX_AMOUNT) {
+      throw new HttpsError("invalid-argument", "분배금은 1 이상의 정수(메소)여야 합니다.", { field: "amountPerPerson" });
+    }
+    return (participants) => ({
+      amounts: Object.fromEntries(participants.filter((member) => member !== uid).map((member) => [member, amount])),
+      summary: { amountPerPerson: amount },
+    });
+  }
+
+  const saleAmount = data?.saleAmount;
+  const feePercent = data?.feePercent;
+  if (typeof saleAmount !== "number" || !Number.isInteger(saleAmount) || saleAmount <= 0 || saleAmount > MAX_SALE_AMOUNT) {
+    throw new HttpsError("invalid-argument", "경매장 판매액은 1 이상의 정수(메소)여야 합니다.", { field: "saleAmount" });
+  }
+  if (!FEE_PERCENTS.includes(feePercent as (typeof FEE_PERCENTS)[number])) {
+    throw new HttpsError("invalid-argument", "수수료는 5% 또는 3%여야 합니다.", { field: "feePercent" });
+  }
+  const weights = (data?.weights ?? {}) as Record<string, unknown>;
+  if (typeof weights !== "object" || Array.isArray(weights)) {
+    throw new HttpsError("invalid-argument", "비율 값이 올바르지 않습니다.", { field: "weights" });
+  }
+
+  return (participants) => {
+    const used: Record<string, number> = {};
+    for (const member of participants) {
+      const weight = weights[member] ?? 1;
+      if (typeof weight !== "number" || !Number.isInteger(weight) || weight < 1 || weight > MAX_WEIGHT) {
+        throw new HttpsError("invalid-argument", `비율은 1~${MAX_WEIGHT}의 정수여야 합니다.`, { field: "weights" });
+      }
+      used[member] = weight;
+    }
+    const result = computeSettlement({
+      saleAmount,
+      feePercent: feePercent as number,
+      sellerUid: uid,
+      participants,
+      weights: used,
+    });
+    if (Object.values(result.amounts).some((amount) => amount <= 0)) {
+      throw new HttpsError("invalid-argument", "판매액이 너무 적어 나눌 수 없습니다.", { field: "saleAmount" });
+    }
+    return {
+      amounts: result.amounts,
+      summary: {
+        saleAmount,
+        feePercent,
+        netAmount: result.netAmount,
+        sellerAmount: result.sellerAmount,
+        weights: result.weights,
+        // 전원 같은 금액일 때만 채운다. 0.2.0 이하 앱이 이 값을 보여 준다.
+        amountPerPerson: result.uniform ? (Object.values(result.amounts)[0] ?? null) : null,
+      },
+    };
+  };
+}
+
+/**
+ * 드롭 아이템을 판매한 파티원이 분배금을 등록한다.
  *
- * 한 일정에는 판매자 1명, 금액 1건만 담는다. 받을 사람마다 settlement/{uid} 문서를 만든다.
- * (지금은 전원 같은 금액이지만, 문서가 사람별이라 나중에 배율 조정을 넣을 수 있다.)
- * 아직 아무에게도 지급하지 않았다면 판매자가 금액을 고쳐 다시 등록할 수 있다.
+ * 경매장 판매액과 수수료(5% 또는 3%)를 받아 파티원별 정산금을 계산한다(calc.ts).
+ * 비율을 따로 주지 않으면 전원 같은 몫이다.
+ * 한 일정에는 판매자 1명, 판매 1건만 담는다. 받을 사람마다 settlement/{uid} 문서를 만든다.
+ * 아직 아무에게도 지급하지 않았다면 판매자가 고쳐서 다시 등록할 수 있다.
  */
 export async function registerSettlement(db: Firestore, uid: string, data: Data): Promise<{ recipients: number }> {
   const { scheduleRef, settlementRef } = refs(db, data);
-  const amount = data?.amountPerPerson;
-  if (typeof amount !== "number" || !Number.isInteger(amount) || amount <= 0 || amount > MAX_AMOUNT) {
-    throw new HttpsError("invalid-argument", "분배금은 1 이상의 정수(메소)여야 합니다.", { field: "amountPerPerson" });
-  }
+  const plan = planner(uid, data);
 
   return db.runTransaction(async (tx) => {
     const schedule = (await tx.get(scheduleRef)).data();
@@ -49,15 +118,17 @@ export async function registerSettlement(db: Firestore, uid: string, data: Data)
       }
     }
 
-    const recipients = participants.filter((member) => member !== uid);
+    const { amounts, summary } = plan(participants);
+    const recipients = Object.keys(amounts);
     for (const recipient of recipients) {
-      tx.set(settlementRef.doc(recipient), { amount, status: "PENDING", paidAt: null, receivedAt: null });
+      tx.set(settlementRef.doc(recipient), { amount: amounts[recipient], status: "PENDING", paidAt: null, receivedAt: null });
     }
     const now = Timestamp.now();
     tx.update(scheduleRef, {
       settlement: {
         sellerUid: uid,
-        amountPerPerson: amount,
+        ...summary,
+        amounts,
         registeredAt: now,
         // 받을 사람이 없으면(1인 파티) 바로 끝난다.
         completed: recipients.length === 0,

@@ -195,4 +195,16 @@ describe("settlement, messages", () => {
     await assertFails(setDoc(doc(db(OUTSIDER), `${SCHEDULE}/messages/m3`), message(OUTSIDER)));
     await assertFails(updateDoc(doc(db(MEMBER), `${SCHEDULE}/messages/m1`), { text: "수정" }));
   });
+
+  it("이미지는 Firebase Storage 주소만 받고, 글과 이미지가 모두 없는 메시지는 받지 않는다", async () => {
+    const base = { senderUid: MEMBER, createdAt: serverTimestamp() };
+    const image = "https://firebasestorage.googleapis.com/v0/b/demo.firebasestorage.app/o/a.jpg?alt=media&token=t";
+    await assertSucceeds(setDoc(doc(db(MEMBER), `${SCHEDULE}/messages/i1`), { ...base, text: "", imageUrl: image }));
+    await assertSucceeds(setDoc(doc(db(MEMBER), `${SCHEDULE}/messages/i2`), { ...base, text: "정산표", imageUrl: image }));
+    await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/messages/i3`), { ...base, text: "" }));
+    await assertFails(
+      setDoc(doc(db(MEMBER), `${SCHEDULE}/messages/i4`), { ...base, text: "", imageUrl: "https://example.com/a.jpg" }),
+    );
+    await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/messages/i5`), { ...base, text: "", imageUrl: 123 }));
+  });
 });

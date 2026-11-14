@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// 정산 채팅에 첨부하는 이미지.
+// 경로: parties/{partyId}/schedules/{periodId}/chat/{uid}/{파일}
+// 파티원만 읽고, 자기 폴더에만 올릴 수 있다. 올린 뒤에는 고치거나 지울 수 없다.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /parties/{partyId}/schedules/{periodId}/chat/{uid}/{fileName} {
+      function isMember() {
+        return request.auth != null
+          && request.auth.uid in firestore.get(/databases/(default)/documents/parties/$(partyId)).data.memberUids;
+      }
+
+      allow read: if isMember();
+      // resource == null: 같은 이름의 파일이 이미 있으면 덮어쓸 수 없다.
+      allow create: if resource == null
+        && isMember()
+        && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+  }
+}

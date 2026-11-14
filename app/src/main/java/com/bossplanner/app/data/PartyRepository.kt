@@ -8,6 +8,9 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.StorageMetadata
+import java.util.UUID
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -21,6 +24,7 @@ import kotlinx.coroutines.tasks.await
 class PartyRepository(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-northeast3"),
+    private val storage: FirebaseStorage = FirebaseStorage.getInstance(),
 ) {
     fun myParties(uid: String): Flow<List<Party>> =
         db.collection("parties").whereArrayContains("memberUids", uid).listen(emptyList()) { snapshot ->
@@ -82,18 +86,53 @@ class PartyRepository(
                     // 방금 보낸 메시지는 서버 시각이 아직 없어서 추정값을 쓴다.
                     createdAtMs = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                         ?.toMillis() ?: 0,
+                    imageUrl = doc.getString("imageUrl"),
                 )
             }
         }
 
-    suspend fun sendMessage(partyId: String, periodId: String, uid: String, text: String) {
-        scheduleRef(partyId, periodId).collection("messages")
-            .add(mapOf("senderUid" to uid, "text" to text, "createdAt" to FieldValue.serverTimestamp()))
-            .await()
+    suspend fun sendMessage(partyId: String, periodId: String, uid: String, text: String, imageUrl: String? = null) {
+        val message = mutableMapOf<String, Any>(
+            "senderUid" to uid,
+            "text" to text,
+            "createdAt" to FieldValue.serverTimestamp(),
+        )
+        if (imageUrl != null) message["imageUrl"] = imageUrl
+        scheduleRef(partyId, periodId).collection("messages").add(message).await()
     }
 
-    suspend fun registerSettlement(partyId: String, periodId: String, amountPerPerson: Long) {
-        call("registerSettlement", mapOf("partyId" to partyId, "periodId" to periodId, "amountPerPerson" to amountPerPerson))
+    /**
+     * 채팅에 첨부할 이미지를 Firebase Storage에 올리고 내려받기 주소를 돌려준다.
+     * 경로는 storage.rules와 맞춰야 한다: 파티원만 읽고, 자기 폴더에만 올릴 수 있다.
+     */
+    suspend fun uploadChatImage(partyId: String, periodId: String, uid: String, jpeg: ByteArray): String {
+        val ref = storage.reference
+            .child("parties/$partyId/schedules/$periodId/chat/$uid/${UUID.randomUUID()}.jpg")
+        ref.putBytes(jpeg, StorageMetadata.Builder().setContentType("image/jpeg").build()).await()
+        return ref.downloadUrl.await().toString()
+    }
+
+    /**
+     * 경매장 판매액과 수수료로 분배금을 등록한다. 파티원별 정산금은 서버가 계산한다.
+     * @param weights 실수령 기준 분배 비율 (uid → 1~100). 비어 있으면 전원 같은 몫
+     */
+    suspend fun registerSettlement(
+        partyId: String,
+        periodId: String,
+        saleAmount: Long,
+        feePercent: Int,
+        weights: Map<String, Int>,
+    ) {
+        call(
+            "registerSettlement",
+            mapOf(
+                "partyId" to partyId,
+                "periodId" to periodId,
+                "saleAmount" to saleAmount,
+                "feePercent" to feePercent,
+                "weights" to weights,
+            ),
+        )
     }
 
     suspend fun markPaid(partyId: String, periodId: String, recipientUid: String) {
@@ -155,13 +194,14 @@ class PartyRepository(
         call("approveChange", mapOf("partyId" to partyId, "periodId" to periodId, "approve" to approve))
     }
 
-    /** 아직 끝나지 않은 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다. */
-    fun myRaids(uid: String): Flow<List<Raid>> {
-        val now = System.currentTimeMillis()
-        // busy는 30분 칸마다 문서가 하나씩 있다. 어제부터의 칸을 읽어 레이드 단위로 묶는다.
-        return db.collection("users").document(uid).collection("busy")
+    /**
+     * fromMs 이후의 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다.
+     * busy는 30분 칸마다 문서가 하나씩 있어서, 같은 레이드의 칸을 하나로 묶는다.
+     */
+    fun myRaids(uid: String, fromMs: Long): Flow<List<Raid>> =
+        db.collection("users").document(uid).collection("busy")
             .orderBy(FieldPath.documentId())
-            .startAt(TimeSlots.slotId(now - 24 * 60 * 60 * 1000L))
+            .startAt(TimeSlots.slotId(fromMs))
             .listen(emptyList()) { snapshot ->
                 snapshot.documents.mapNotNull { doc ->
                     Raid(
@@ -171,9 +211,8 @@ class PartyRepository(
                         startMs = doc.getTimestamp("start")?.toMillis() ?: return@mapNotNull null,
                         endMs = doc.getTimestamp("end")?.toMillis() ?: return@mapNotNull null,
                     )
-                }.distinct().filter { it.endMs > now }.sortedBy { it.startMs }
+                }.distinct().sortedBy { it.startMs }
             }
-    }
 
     suspend fun setVote(partyId: String, periodId: String, uid: String, agreed: List<Int>, round: Int) {
         scheduleRef(partyId, periodId).collection("votes").document(uid)
@@ -304,7 +343,11 @@ class PartyRepository(
             confirmed = (doc.get("confirmed") as? Map<*, *>)?.let { c ->
                 val confirmedStart = (c["start"] as? Timestamp)?.toMillis() ?: return@let null
                 val confirmedEnd = (c["end"] as? Timestamp)?.toMillis() ?: return@let null
-                Confirmed(confirmedStart, confirmedEnd)
+                Confirmed(
+                    startMs = confirmedStart,
+                    endMs = confirmedEnd,
+                    memberUids = (c["memberUids"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
+                )
             },
             changeRequest = (doc.get("changeRequest") as? Map<*, *>)?.let { r ->
                 ChangeRequest(
@@ -318,7 +361,10 @@ class PartyRepository(
             settlement = (doc.get("settlement") as? Map<*, *>)?.let { m ->
                 Settlement(
                     sellerUid = m["sellerUid"] as? String ?: return@let null,
-                    amountPerPerson = (m["amountPerPerson"] as? Number)?.toLong() ?: 0,
+                    saleAmount = (m["saleAmount"] as? Number)?.toLong(),
+                    feePercent = (m["feePercent"] as? Number)?.toInt(),
+                    netAmount = (m["netAmount"] as? Number)?.toLong(),
+                    amountPerPerson = (m["amountPerPerson"] as? Number)?.toLong(),
                     completed = m["completed"] as? Boolean ?: false,
                 )
             },

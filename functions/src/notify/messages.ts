@@ -136,14 +136,19 @@ export function scheduleNotifications(
   const settlement = after.settlement;
   if (settlement) {
     const previous = before.settlement;
-    if (!previous || previous.amountPerPerson !== settlement.amountPerPerson) {
-      const recipients = everyone.filter((uid) => uid !== settlement.sellerUid);
-      pushes.push(
-        push(
-          recipients,
-          `${memberName(party, settlement.sellerUid)}님이 분배금 1인 ${formatMeso(settlement.amountPerPerson)}를 등록했습니다. 채팅으로 수령 방법을 알려 주세요.`,
-        ),
-      );
+    const amountsOf = (value: DocumentData | undefined | null) =>
+      JSON.stringify([value?.amounts ?? null, value?.amountPerPerson ?? null]);
+    if (!previous || amountsOf(previous) !== amountsOf(settlement)) {
+      // 사람마다 정산금이 다를 수 있어서 한 명씩 자기 금액을 알려 준다.
+      const seller = memberName(party, settlement.sellerUid);
+      for (const uid of everyone) {
+        if (uid === settlement.sellerUid) continue;
+        const amount = (settlement.amounts?.[uid] ?? settlement.amountPerPerson) as number | undefined;
+        if (amount === undefined || amount === null) continue;
+        pushes.push(
+          push([uid], `${seller}님이 분배금을 등록했습니다. 내 정산금은 ${formatMeso(amount)}입니다. 채팅으로 수령 방법을 알려 주세요.`),
+        );
+      }
     }
     if (settlement.completed && !previous?.completed) {
       pushes.push(push(everyone, "전원이 수령을 확인해 정산이 완료됐습니다."));
@@ -173,10 +178,11 @@ export function settlementNotifications(
 }
 
 /** 정산 채팅 메시지 알림: 보낸 사람을 뺀 나머지에게 */
-export function messageNotification(party: PartyInfo, senderUid: string, text: string): Push[] {
+export function messageNotification(party: PartyInfo, senderUid: string, text: string, hasImage = false): Push[] {
   const uids = party.memberUids.filter((uid) => uid !== senderUid);
   if (uids.length === 0) return [];
-  const preview = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  const trimmed = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  const preview = hasImage ? (trimmed ? `(사진) ${trimmed}` : "사진을 보냈습니다.") : trimmed;
   return [{ uids, title: party.name, body: `${memberName(party, senderUid)}: ${preview}`, partyId: party.id }];
 }
 
