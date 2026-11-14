@@ -25,7 +25,7 @@ fun CharacterPicker(
     Column {
         Text("참여할 캐릭터", style = MaterialTheme.typography.titleSmall)
         if (characters.isEmpty()) {
-            Text("선택한 캐릭터가 없습니다. 홈에서 캐릭터를 먼저 선택해 주세요.", style = MaterialTheme.typography.bodySmall)
+            Text("선택한 캐릭터가 없습니다. '내 캐릭터' 메뉴에서 캐릭터를 먼저 선택해 주세요.", style = MaterialTheme.typography.bodySmall)
         }
         characters.forEach { character ->
             Row(

@@ -31,6 +31,13 @@ object TimeSlots {
     /** ms가 속한 KST 날짜의 00:00. 변경 요청 마감(전날 23:59) 계산에 쓴다. */
     fun startOfDay(ms: Long): Long = at(ms).toLocalDate().atStartOfDay(KST).toInstant().toEpochMilli()
 
+    /** ms가 속한 주간 주기의 시작: 가장 최근 목요일 00:00 (KST) */
+    fun weekStart(ms: Long): Long {
+        val today = at(ms).toLocalDate()
+        val daysSinceThursday = (today.dayOfWeek.value - java.time.DayOfWeek.THURSDAY.value + 7) % 7
+        return today.minusDays(daysSinceThursday.toLong()).atStartOfDay(KST).toInstant().toEpochMilli()
+    }
+
     /** 요일 번호: 1(월) ~ 7(일) */
     fun weekday(ms: Long): Int = at(ms).dayOfWeek.value
 

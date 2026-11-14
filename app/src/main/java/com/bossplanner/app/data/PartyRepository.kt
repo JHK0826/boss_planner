@@ -194,13 +194,14 @@ class PartyRepository(
         call("approveChange", mapOf("partyId" to partyId, "periodId" to periodId, "approve" to approve))
     }
 
-    /** 아직 끝나지 않은 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다. */
-    fun myRaids(uid: String): Flow<List<Raid>> {
-        val now = System.currentTimeMillis()
-        // busy는 30분 칸마다 문서가 하나씩 있다. 어제부터의 칸을 읽어 레이드 단위로 묶는다.
-        return db.collection("users").document(uid).collection("busy")
+    /**
+     * fromMs 이후의 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다.
+     * busy는 30분 칸마다 문서가 하나씩 있어서, 같은 레이드의 칸을 하나로 묶는다.
+     */
+    fun myRaids(uid: String, fromMs: Long): Flow<List<Raid>> =
+        db.collection("users").document(uid).collection("busy")
             .orderBy(FieldPath.documentId())
-            .startAt(TimeSlots.slotId(now - 24 * 60 * 60 * 1000L))
+            .startAt(TimeSlots.slotId(fromMs))
             .listen(emptyList()) { snapshot ->
                 snapshot.documents.mapNotNull { doc ->
                     Raid(
@@ -210,9 +211,8 @@ class PartyRepository(
                         startMs = doc.getTimestamp("start")?.toMillis() ?: return@mapNotNull null,
                         endMs = doc.getTimestamp("end")?.toMillis() ?: return@mapNotNull null,
                     )
-                }.distinct().filter { it.endMs > now }.sortedBy { it.startMs }
+                }.distinct().sortedBy { it.startMs }
             }
-    }
 
     suspend fun setVote(partyId: String, periodId: String, uid: String, agreed: List<Int>, round: Int) {
         scheduleRef(partyId, periodId).collection("votes").document(uid)

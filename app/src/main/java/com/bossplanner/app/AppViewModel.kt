@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
-/** 온보딩 단계: 로그인 → API Key 등록 → 캐릭터 선택 → 홈 */
+/** 온보딩 단계: 로그인 → API Key 등록 → 캐릭터 선택 → 메인 화면 */
 sealed interface Stage {
     data object Loading : Stage
     data object SignedOut : Stage

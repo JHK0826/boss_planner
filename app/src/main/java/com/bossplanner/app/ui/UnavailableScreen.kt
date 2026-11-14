@@ -111,7 +111,7 @@ fun UnavailableScreen(
         Text(
             when {
                 prefilled -> "고정 불가 시간으로 채워 두었습니다. 이번 주기에 달라진 부분만 고치고 제출해 주세요."
-                routine.isEmpty() -> "안 되는 시간을 표시하고 제출해 주세요. 매주 비슷하다면 홈의 '고정 불가 시간'에 저장해 두면 다음부터 미리 채워집니다."
+                routine.isEmpty() -> "안 되는 시간을 표시하고 제출해 주세요. 매주 비슷하다면 '시간표' 메뉴의 고정 불가 시간에 저장해 두면 다음부터 미리 채워집니다."
                 else -> "안 되는 시간을 표시하고 제출해 주세요. 안 되는 시간이 없어도 제출을 눌러야 입력으로 처리됩니다."
             },
             style = MaterialTheme.typography.bodySmall,

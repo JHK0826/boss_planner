@@ -92,7 +92,7 @@ fun PartyScreen(
 
     val loadedParty = partyState
     val party = loadedParty?.value
-    // 탈퇴했거나 파티가 없어지면 홈으로 돌아간다.
+    // 탈퇴했거나 파티가 없어지면 파티 목록으로 돌아간다.
     LaunchedEffect(loadedParty) {
         if (loadedParty != null && loadedParty.value == null) onBack()
     }
@@ -129,7 +129,7 @@ fun PartyScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        TextButton(onClick = onBack, enabled = !busy) { Text("← 홈") }
+        TextButton(onClick = onBack, enabled = !busy) { Text("← 파티 목록") }
         Text(party.name, style = MaterialTheme.typography.headlineSmall)
         Text(
             "${party.bossLabel}\n${if (party.isWeekly) "주간" else "월간"} · ${durationLabel(party.durationMinutes)}",
