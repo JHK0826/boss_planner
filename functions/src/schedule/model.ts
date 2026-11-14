@@ -11,13 +11,20 @@ export interface Candidate {
 }
 
 /** 새 주기의 일정 문서 초깃값 */
-export function newScheduleData(period: Period, durationMinutes: number): DocumentData {
+/**
+ * @param inputDeadlineMs 불가 시간 입력 마감. 주기 중간에 시작한 일정은 시작한 날 23:59로 따로 준다.
+ */
+export function newScheduleData(
+  period: Period,
+  durationMinutes: number,
+  inputDeadlineMs: number = period.inputDeadlineMs,
+): DocumentData {
   return {
     state: "OPEN" satisfies ScheduleState,
     cycle: period.cycle,
     periodStart: Timestamp.fromMillis(period.startMs),
     periodEnd: Timestamp.fromMillis(period.endMs),
-    inputDeadline: Timestamp.fromMillis(period.inputDeadlineMs),
+    inputDeadline: Timestamp.fromMillis(inputDeadlineMs),
     // 실제 소요 시간(분). 20분 단위로 잡을 수 있다.
     durationMinutes,
     // 시간표는 30분 칸이라, 추천과 충돌 검사는 소요 시간을 덮는 칸 수로 한다 (40분 → 2칸).

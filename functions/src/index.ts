@@ -11,6 +11,7 @@ export {
   joinParty,
   leaveParty,
   delegateLeader,
+  startSchedule,
   updatePartyPreferences,
 } from "./callable/party";
 export { confirmSchedule, requestChange, approveChange } from "./callable/schedule";

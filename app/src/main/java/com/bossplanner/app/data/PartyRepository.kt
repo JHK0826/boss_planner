@@ -257,6 +257,11 @@ class PartyRepository(
         return call("createParty", data)["partyId"] as? String ?: ""
     }
 
+    /** 파티장이 다음 주기를 기다리지 않고 이번 주기 일정을 지금 연다. */
+    suspend fun startSchedule(partyId: String) {
+        call("startSchedule", mapOf("partyId" to partyId))
+    }
+
     /** 파티장이 추천 설정을 바꾼다. 조율 중이면 서버가 후보를 다시 계산한다. */
     suspend fun updatePartyPreferences(partyId: String, preferredWindow: PreferredWindow?, minLeadMinutes: Int) {
         // 선호 시간대를 없앨 때는 null을 보내야 한다.

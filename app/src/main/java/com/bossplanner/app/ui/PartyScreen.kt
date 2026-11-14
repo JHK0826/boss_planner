@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
 private data class Loaded<T>(val value: T)
 
 private sealed interface Confirm {
+    data object StartNow : Confirm
     data object Settings : Confirm
     data object Leave : Confirm
     data class Delegate(val member: PartyMember) : Confirm
@@ -199,6 +200,17 @@ fun PartyScreen(
             onAsk = { confirm = it },
             onRespondToChange = { approve -> run { parties.respondToChange(partyId, schedule!!.id, approve) } },
         )
+        // 이번 주기 일정이 아직 없으면 파티장이 바로 열 수 있다.
+        val noCurrentSchedule = scheduleState != null && (schedule == null || schedule.periodEndMs <= now)
+        if (isLeader && noCurrentSchedule) {
+            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { confirm = Confirm.StartNow }) {
+                Text("이번 주기 지금 시작")
+            }
+            Text(
+                "파티원을 다 모은 뒤에 눌러 주세요. 시작하면 남은 기간 안에서 바로 일정을 조율합니다.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         if (inputOpen && schedule != null) {
             OutlinedButton(
                 enabled = !busy,
@@ -242,6 +254,23 @@ fun PartyScreen(
 
     when (val current = confirm) {
         null -> Unit
+        Confirm.StartNow -> AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("이번 주기 지금 시작") },
+            text = {
+                Text(
+                    "지금 일정을 열면 파티원 ${party.memberUids.size}명에게 알림이 가고, 오늘 23:59까지 불가 시간을 입력하게 됩니다.\n\n" +
+                        "시작한 뒤에는 가입과 탈퇴가 ${if (party.isWeekly) "목요일" else "매월 1일"}로 제한됩니다. 파티원이 다 모였는지 확인해 주세요.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    run { parties.startSchedule(partyId) }
+                }) { Text("시작") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+        )
         Confirm.Settings -> {
             var draft by remember { mutableStateOf(RecommendSettings(party.preferredWindow, party.minLeadMinutes)) }
             AlertDialog(

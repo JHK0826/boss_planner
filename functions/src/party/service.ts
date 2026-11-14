@@ -9,10 +9,11 @@ import {
   validateBossSelection,
   type PartyBoss,
 } from "../domain/bosses";
-import { currentPeriod, isCycleStartDay, type Cycle } from "../domain/time";
+import { currentPeriod, isCycleStartDay, startOfKstDay, type Cycle } from "../domain/time";
 import { evaluateSchedule } from "../schedule/evaluate";
 import {
   DEFAULT_MIN_LEAD_MINUTES,
+  durationMinutesOf,
   newScheduleData,
   slotsForMinutes,
   type PreferredWindow,
@@ -355,4 +356,39 @@ export async function updatePartyPreferences(db: Firestore, uid: string, data: D
   });
 
   await evaluateSchedule(db, partyId, currentPeriod(cycle, nowMs).id, nowMs);
+}
+
+/**
+ * 파티장이 이번 주기 일정을 지금 연다.
+ *
+ * 주기 시작일이 아닌 날에 만든 파티는 원래 다음 주기부터 시작한다. 파티원을 다 모은 뒤 이 함수를 부르면
+ * 남은 기간(주간은 다음 수요일까지) 안에서 바로 조율할 수 있다.
+ * - 입력 마감은 시작한 날 23:59다.
+ * - 일정이 열리면 그 뒤로는 가입·탈퇴가 주기 시작일로 제한된다.
+ */
+export async function startSchedule(db: Firestore, uid: string, data: Data, nowMs: number): Promise<{ periodId: string }> {
+  const partyId = text(data, "partyId", 64);
+  const partyRef = db.doc(`parties/${partyId}`);
+
+  return db.runTransaction(async (tx) => {
+    const party = (await tx.get(partyRef)).data();
+    if (!party || party.leaderUid !== uid) {
+      throw new HttpsError("permission-denied", "파티장만 일정을 시작할 수 있습니다.", { reason: "not-leader" });
+    }
+    const period = currentPeriod(party.cycle as Cycle, nowMs);
+    const scheduleRef = partyRef.collection("schedules").doc(period.id);
+    if ((await tx.get(scheduleRef)).exists) {
+      throw new HttpsError("already-exists", "이번 주기 일정이 이미 열려 있습니다.", { reason: "already-started" });
+    }
+    const durationMinutes = durationMinutesOf(party);
+    if (nowMs + durationMinutes * 60 * 1000 > period.endMs) {
+      throw new HttpsError("failed-precondition", "이번 주기에 남은 시간이 없습니다. 다음 주기에 자동으로 시작됩니다.", {
+        reason: "no-time-left",
+      });
+    }
+    const endOfToday = startOfKstDay(nowMs) + 24 * 60 * 60 * 1000;
+    tx.create(scheduleRef, newScheduleData(period, durationMinutes, Math.min(endOfToday, period.endMs)));
+    tx.update(partyRef, { scheduleStarted: true });
+    return { periodId: period.id };
+  });
 }

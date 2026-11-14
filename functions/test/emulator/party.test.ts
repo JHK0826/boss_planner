@@ -1,7 +1,14 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp, type Firestore } from "firebase-admin/firestore";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createParty, delegateLeader, joinParty, leaveParty, updatePartyPreferences } from "../../src/party/service";
+import {
+  createParty,
+  delegateLeader,
+  joinParty,
+  leaveParty,
+  startSchedule,
+  updatePartyPreferences,
+} from "../../src/party/service";
 import { evaluateSchedule } from "../../src/schedule/evaluate";
 import { openSchedules } from "../../src/schedule/open";
 
@@ -202,6 +209,68 @@ describe("같은 캐릭터의 보스 중복", () => {
     const first = await createParty(db, "a", partyInput("a", { bosses: bundle }), THU);
     await leaveParty(db, "a", { partyId: first.partyId }, THU);
     await createParty(db, "a", partyInput("a", { bosses: bundle }), THU);
+  });
+});
+
+describe("이번 주기 지금 시작", () => {
+  /** 금요일에 a가 만들고 b가 가입한 파티. 아직 일정이 없다. */
+  async function partyCreatedOnFriday() {
+    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), FRI);
+    await join("b", inviteCode, FRI);
+    expect((await db.collection(`parties/${partyId}/schedules`).get()).size).toBe(0);
+    return { partyId, inviteCode };
+  }
+
+  it("파티장이 시작하면 이번 주기 일정이 열리고, 입력 마감은 시작한 날 23:59다", async () => {
+    const { partyId } = await partyCreatedOnFriday();
+
+    await expect(startSchedule(db, "b", { partyId }, FRI)).rejects.toMatchObject({ details: { reason: "not-leader" } });
+    expect(await startSchedule(db, "a", { partyId }, FRI)).toEqual({ periodId: PERIOD });
+
+    const opened = (await schedule(partyId))!;
+    expect(opened).toMatchObject({ state: "OPEN", candidates: [] });
+    expect(opened.periodEnd.toMillis()).toBe(kst("2026-11-19T00:00:00"));
+    expect(opened.inputDeadline.toMillis()).toBe(kst("2026-11-14T00:00:00"));
+    expect((await db.doc(`parties/${partyId}`).get()).get("scheduleStarted")).toBe(true);
+
+    await expect(startSchedule(db, "a", { partyId }, FRI)).rejects.toMatchObject({ details: { reason: "already-started" } });
+  });
+
+  it("시작한 뒤에는 남은 기간 안에서 추천하고, 가입은 다시 주기 시작일로 제한된다", async () => {
+    const { partyId, inviteCode } = await partyCreatedOnFriday();
+    await startSchedule(db, "a", { partyId }, FRI);
+
+    await expect(join("c", inviteCode, FRI)).rejects.toMatchObject({ details: { reason: "not-start-day" } });
+
+    await submit(partyId, "a", []);
+    await submit(partyId, "b", []);
+    expect(await evaluateSchedule(db, partyId, PERIOD, FRI)).toBe("recommended");
+    // 금요일 10:00부터 수요일까지 → 금~수 6일에 하나씩
+    expect((await schedule(partyId))!.candidates.map((c: { slotId: string }) => c.slotId)).toEqual([
+      "20261113-1000",
+      "20261114-0000",
+      "20261115-0000",
+      "20261116-0000",
+      "20261117-0000",
+      "20261118-0000",
+    ]);
+  });
+
+  it("주기가 거의 끝나 남은 시간이 없으면 시작할 수 없다", async () => {
+    const { partyId } = await partyCreatedOnFriday();
+    await expect(startSchedule(db, "a", { partyId }, kst("2026-11-18T23:30:00"))).rejects.toMatchObject({
+      details: { reason: "no-time-left" },
+    });
+    // 한 시간짜리가 들어갈 마지막 시각에는 된다.
+    await startSchedule(db, "a", { partyId }, kst("2026-11-18T23:00:00"));
+    expect((await schedule(partyId))!.inputDeadline.toMillis()).toBe(kst("2026-11-19T00:00:00"));
+  });
+
+  it("다음 주기가 시작되면 평소처럼 새 일정이 열린다", async () => {
+    const { partyId } = await partyCreatedOnFriday();
+    await startSchedule(db, "a", { partyId }, FRI);
+    expect(await openSchedules(db, "WEEKLY", kst("2026-11-19T00:00:00"))).toBe(1);
+    expect((await db.doc(`parties/${partyId}/schedules/W-20261119`).get()).get("state")).toBe("OPEN");
   });
 });
 
