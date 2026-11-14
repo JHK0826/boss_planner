@@ -120,7 +120,7 @@ service cloud.firestore {
           allow create, update: if isSelf(uid) && isMember(partyId) && acceptsInput(partyId, periodId)
             && request.resource.data.keys().hasOnly(['agreed', 'round', 'updatedAt'])
             && request.resource.data.agreed is list
-            && request.resource.data.agreed.size() <= 3
+            && request.resource.data.agreed.size() <= 12
             && request.resource.data.round is int
             && request.resource.data.updatedAt == request.time;
           allow delete: if false;

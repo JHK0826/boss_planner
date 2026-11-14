@@ -99,6 +99,11 @@ export function slotMs(period: Pick<Period, "startMs">, index: number): number {
   return period.startMs + index * SLOT_MS;
 }
 
+/** KST 기준 요일: 1(월) ~ 7(일) */
+export function kstWeekday(ms: number): number {
+  return ((kstDate(ms).getUTCDay() + 6) % 7) + 1;
+}
+
 /** ms가 속한 KST 날짜의 00:00 */
 export function startOfKstDay(ms: number): number {
   const d = kstDate(ms);

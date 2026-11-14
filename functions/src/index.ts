@@ -5,7 +5,14 @@ initializeApp();
 export { registerApiKey } from "./callable/registerApiKey";
 export { listCharacters } from "./callable/listCharacters";
 export { getCharacterInfo } from "./callable/getCharacterInfo";
-export { getBossCatalog, createParty, joinParty, leaveParty, delegateLeader } from "./callable/party";
+export {
+  getBossCatalog,
+  createParty,
+  joinParty,
+  leaveParty,
+  delegateLeader,
+  updatePartyPreferences,
+} from "./callable/party";
 export { confirmSchedule, requestChange, approveChange } from "./callable/schedule";
 export {
   onUnavailableWrite,

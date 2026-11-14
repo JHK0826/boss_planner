@@ -44,6 +44,16 @@ export function newScheduleData(period: Period, durationMinutes: number): Docume
   };
 }
 
+/** 파티 선호 시간대: 요일(1=월 ~ 7=일)과 하루 안의 30분 칸 범위 [startRow, endRow) */
+export interface PreferredWindow {
+  days: number[];
+  startRow: number;
+  endRow: number;
+}
+
+/** 최소 여유 시간의 기본값(분). 지금으로부터 이 시간 안에 시작하는 후보는 추천하지 않는다. */
+export const DEFAULT_MIN_LEAD_MINUTES = 180;
+
 /** 소요 시간을 덮는 데 필요한 30분 칸 수 */
 export function slotsForMinutes(durationMinutes: number): number {
   return Math.ceil(durationMinutes / 30);
