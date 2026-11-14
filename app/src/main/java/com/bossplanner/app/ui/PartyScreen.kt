@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -34,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
 import com.bossplanner.app.data.Confirmed
 import com.bossplanner.app.data.Party
@@ -53,6 +55,7 @@ import kotlinx.coroutines.launch
 private data class Loaded<T>(val value: T)
 
 private sealed interface Confirm {
+    data object Settings : Confirm
     data object Leave : Confirm
     data class Delegate(val member: PartyMember) : Confirm
     data class Lock(val index: Int, val label: String) : Confirm
@@ -86,6 +89,12 @@ fun PartyScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
+    // 파티원 캐릭터 이미지 (uid → 주소)
+    var memberImages by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val memberCharacters = partyState?.value?.members?.values?.map { it.uid to it.characterId }
+    LaunchedEffect(memberCharacters) {
+        partyState?.value?.let { memberImages = parties.memberImages(it) }
+    }
     val scope = rememberCoroutineScope()
 
     BackHandler(enabled = !busy, onBack = onBack)
@@ -151,11 +160,21 @@ fun PartyScreen(
             }
         }
 
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "추천 설정 · " + recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            if (isLeader) TextButton(enabled = !busy, onClick = { confirm = Confirm.Settings }) { Text("바꾸기") }
+        }
+
         Text("파티원 ${party.memberUids.size}명", style = MaterialTheme.typography.titleMedium)
         party.memberUids.forEach { memberUid ->
             val member = party.members[memberUid] ?: return@forEach
             MemberRow(
                 member = member,
+                imageUrl = memberImages[memberUid],
                 isLeader = memberUid == party.leaderUid,
                 isMe = memberUid == uid,
                 status = memberStatus(schedule, unavailable[memberUid], votes[memberUid]),
@@ -223,6 +242,32 @@ fun PartyScreen(
 
     when (val current = confirm) {
         null -> Unit
+        Confirm.Settings -> {
+            var draft by remember { mutableStateOf(RecommendSettings(party.preferredWindow, party.minLeadMinutes)) }
+            AlertDialog(
+                onDismissRequest = { confirm = null },
+                title = { Text("추천 설정") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RecommendSettingsEditor(draft, enabled = true) { draft = it }
+                        if (schedule?.acceptsInput == true && schedule.candidates.isNotEmpty()) {
+                            Text(
+                                "지금 투표 중입니다. 설정을 바꾸면 추천 시간을 다시 계산하고 투표도 다시 합니다.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirm = null
+                        run { parties.updatePartyPreferences(partyId, draft.preferredWindow, draft.minLeadMinutes) }
+                    }) { Text("저장") }
+                },
+                dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+            )
+        }
         is Confirm.Lock -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("일정 확정") },
@@ -321,9 +366,18 @@ private fun memberStatus(schedule: Schedule?, unavailable: Unavailable?, vote: V
 }
 
 @Composable
-private fun MemberRow(member: PartyMember, isLeader: Boolean, isMe: Boolean, status: String?, onDelegate: (() -> Unit)?) {
+private fun MemberRow(
+    member: PartyMember,
+    imageUrl: String?,
+    isLeader: Boolean,
+    isMe: Boolean,
+    status: String?,
+    onDelegate: (() -> Unit)?,
+) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
+        // 이미지가 없어도 자리를 비워 두어 줄이 가지런하게 한다.
+        AsyncImage(model = imageUrl, contentDescription = null, modifier = Modifier.size(56.dp))
+        Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
             Text(
                 member.label() + (if (isMe) " (나)" else "") + (if (isLeader) " · 파티장" else ""),
                 style = MaterialTheme.typography.titleSmall,
@@ -515,6 +569,16 @@ private fun CandidateVoting(
             val checked = index in selected
             val unanimous = index in schedule.unanimous
             val label = TimeSlots.range(candidate.startMs, candidate.endMs)
+            // 후보는 시간순이다. 날짜가 바뀔 때마다 요일을 한 번 적어 요일별로 묶어 보이게 한다.
+            val day = TimeSlots.dayWithWeekday(candidate.startMs)
+            if (index == 0 || TimeSlots.dayWithWeekday(schedule.candidates[index - 1].startMs) != day) {
+                Text(
+                    day,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -524,7 +588,10 @@ private fun CandidateVoting(
             ) {
                 Checkbox(checked = checked, onCheckedChange = null)
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(label, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "${TimeSlots.time(candidate.startMs)} ~ ${TimeSlots.time(candidate.endMs)}",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
                     Text(
                         if (unanimous) "전원 동의" else "동의 ${currentVotes.count { index in it.agreed }}/${memberCount}명",
                         style = MaterialTheme.typography.bodySmall,

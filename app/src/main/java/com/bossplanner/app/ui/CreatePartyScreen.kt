@@ -40,14 +40,14 @@ import com.bossplanner.app.data.PartyRepository
 import com.bossplanner.app.data.userMessage
 import kotlinx.coroutines.launch
 
-private const val DURATION_STEP = 20
+private const val DURATION_STEP = 10
 
 /**
  * 고정 파티 만들기. 보스를 여러 개 묶을 수 있다.
  *
  * - 주간 보스와 월간 보스는 주기가 달라 한 파티에 섞을 수 없다.
  * - 같은 캐릭터가 이미 다른 파티에서 잡는 보스는 고를 수 없다 (서버에서도 검사한다).
- * - 소요 시간은 보스 하나에 20분으로 잡고, 20분 단위로 고칠 수 있다.
+ * - 소요 시간은 보스 하나에 20분으로 잡고, 10분 단위로 고칠 수 있다 (최소 20분).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -65,6 +65,7 @@ fun CreatePartyScreen(
     var selected by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     // null이면 보스 수에 맞춰 자동으로 정한다.
     var customDuration by remember { mutableStateOf<Int?>(null) }
+    var settings by remember { mutableStateOf(RecommendSettings()) }
     var characterId by rememberSaveable { mutableStateOf(characters.firstOrNull()?.id) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -185,14 +186,14 @@ fun CreatePartyScreen(
             OutlinedButton(
                 enabled = !busy && durationMinutes > loaded.minutesPerBoss,
                 onClick = { customDuration = (durationMinutes - DURATION_STEP).coerceAtLeast(loaded.minutesPerBoss) },
-            ) { Text("−20분") }
+            ) { Text("−10분") }
             Box(contentAlignment = Alignment.Center) {
                 Text(durationLabel(durationMinutes), style = MaterialTheme.typography.titleMedium)
             }
             OutlinedButton(
                 enabled = !busy && durationMinutes < loaded.maxDurationMinutes,
                 onClick = { customDuration = (durationMinutes + DURATION_STEP).coerceAtMost(loaded.maxDurationMinutes) },
-            ) { Text("+20분") }
+            ) { Text("+10분") }
             if (customDuration != null && customDuration != autoDuration) {
                 TextButton(enabled = !busy, onClick = { customDuration = null }) { Text("자동") }
             }
@@ -201,6 +202,8 @@ fun CreatePartyScreen(
             "보스 하나에 ${loaded.minutesPerBoss}분으로 계산합니다. 시간표는 30분 단위라 추천 시간은 정각이나 30분에 시작합니다.",
             style = MaterialTheme.typography.bodySmall,
         )
+
+        RecommendSettingsEditor(settings, enabled = !busy) { settings = it }
 
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
@@ -214,7 +217,16 @@ fun CreatePartyScreen(
                 error = null
                 scope.launch {
                     try {
-                        onCreated(parties.createParty(name.trim(), bosses, durationMinutes, character))
+                        onCreated(
+                            parties.createParty(
+                                name.trim(),
+                                bosses,
+                                durationMinutes,
+                                character,
+                                settings.preferredWindow,
+                                settings.minLeadMinutes,
+                            ),
+                        )
                     } catch (e: Exception) {
                         error = e.userMessage()
                     } finally {
