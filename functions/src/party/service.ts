@@ -9,9 +9,15 @@ import {
   validateBossSelection,
   type PartyBoss,
 } from "../domain/bosses";
-import { currentPeriod, isCycleStartDay, type Cycle } from "../domain/time";
+import { currentPeriod, isCycleStartDay, startOfKstDay, type Cycle } from "../domain/time";
 import { evaluateSchedule } from "../schedule/evaluate";
-import { newScheduleData, slotsForMinutes } from "../schedule/model";
+import {
+  DEFAULT_MIN_LEAD_MINUTES,
+  durationMinutesOf,
+  newScheduleData,
+  slotsForMinutes,
+  type PreferredWindow,
+} from "../schedule/model";
 
 export const MAX_PARTY_SIZE = 6;
 export const MAX_DURATION_MINUTES = MAX_BOSSES_PER_PARTY * MINUTES_PER_BOSS;
@@ -120,6 +126,52 @@ function assertMembershipWindow(
   }
 }
 
+/** 최소 여유 시간으로 받을 수 있는 최대값: 2일 */
+const MAX_LEAD_MINUTES = 48 * 60;
+
+/**
+ * 추천 설정을 검사한다.
+ * - preferredWindow: 선호 시간대. null이면 없음. 요일(1=월~7=일)과 하루 안의 30분 칸 범위
+ * - minLeadMinutes: 최소 여유 시간(분). 30분 단위, 0~2일
+ * 요청에 없는 항목은 결과에도 넣지 않는다.
+ */
+function parsePreferences(data: Data): { preferredWindow?: PreferredWindow | null; minLeadMinutes?: number } {
+  const result: { preferredWindow?: PreferredWindow | null; minLeadMinutes?: number } = {};
+
+  const window = data?.preferredWindow;
+  if (window === null) {
+    result.preferredWindow = null;
+  } else if (window !== undefined) {
+    const { days, startRow, endRow } = window as Record<string, unknown>;
+    const validDays =
+      Array.isArray(days) &&
+      days.length > 0 &&
+      days.every((day) => Number.isInteger(day) && day >= 1 && day <= 7) &&
+      new Set(days).size === days.length;
+    const validRows =
+      Number.isInteger(startRow) && Number.isInteger(endRow) && (startRow as number) >= 0 && (endRow as number) <= 48 && (startRow as number) < (endRow as number);
+    if (!validDays || !validRows) {
+      throw new HttpsError("invalid-argument", "선호 시간대가 올바르지 않습니다.", { field: "preferredWindow" });
+    }
+    result.preferredWindow = {
+      days: [...(days as number[])].sort((a, b) => a - b),
+      startRow: startRow as number,
+      endRow: endRow as number,
+    };
+  }
+
+  const lead = data?.minLeadMinutes;
+  if (lead !== undefined) {
+    if (typeof lead !== "number" || !Number.isInteger(lead) || lead < 0 || lead > MAX_LEAD_MINUTES || lead % 30 !== 0) {
+      throw new HttpsError("invalid-argument", "최소 여유 시간은 30분 단위로 0~48시간이어야 합니다.", {
+        field: "minLeadMinutes",
+      });
+    }
+    result.minLeadMinutes = lead;
+  }
+  return result;
+}
+
 export interface CreatePartyResult {
   partyId: string;
   inviteCode: string;
@@ -149,6 +201,7 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
     );
   }
 
+  const preferences = parsePreferences(data);
   const member = await loadMember(db, uid, characterId);
   await assertNoBossOverlap(db, uid, characterId, bosses, null);
   const startsNow = isCycleStartDay(cycle, nowMs);
@@ -167,6 +220,8 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
         cycle,
         durationMinutes,
         durationSlots: slotsForMinutes(durationMinutes),
+        preferredWindow: preferences.preferredWindow ?? null,
+        minLeadMinutes: preferences.minLeadMinutes ?? DEFAULT_MIN_LEAD_MINUTES,
         leaderUid: uid,
         memberUids: [uid],
         members: { [uid]: member },
@@ -276,5 +331,64 @@ export async function delegateLeader(db: Firestore, uid: string, data: Data, now
     }
     assertMembershipWindow(party, null, nowMs, false);
     tx.update(partyRef, { leaderUid: newLeaderUid });
+  });
+}
+
+/**
+ * 파티장이 추천 설정(선호 시간대, 최소 여유 시간)을 바꾼다.
+ * 이번 주기 일정이 아직 조율 중이면 새 설정으로 후보를 다시 계산한다(투표도 다시 한다).
+ */
+export async function updatePartyPreferences(db: Firestore, uid: string, data: Data, nowMs: number): Promise<void> {
+  const partyId = text(data, "partyId", 64);
+  const preferences = parsePreferences(data);
+  if (Object.keys(preferences).length === 0) {
+    throw new HttpsError("invalid-argument", "바꿀 설정이 없습니다.");
+  }
+  const partyRef = db.doc(`parties/${partyId}`);
+
+  const cycle = await db.runTransaction(async (tx) => {
+    const party = (await tx.get(partyRef)).data();
+    if (!party || party.leaderUid !== uid) {
+      throw new HttpsError("permission-denied", "파티장만 추천 설정을 바꿀 수 있습니다.", { reason: "not-leader" });
+    }
+    tx.update(partyRef, preferences);
+    return party.cycle as Cycle;
+  });
+
+  await evaluateSchedule(db, partyId, currentPeriod(cycle, nowMs).id, nowMs);
+}
+
+/**
+ * 파티장이 이번 주기 일정을 지금 연다.
+ *
+ * 주기 시작일이 아닌 날에 만든 파티는 원래 다음 주기부터 시작한다. 파티원을 다 모은 뒤 이 함수를 부르면
+ * 남은 기간(주간은 다음 수요일까지) 안에서 바로 조율할 수 있다.
+ * - 입력 마감은 시작한 날 23:59다.
+ * - 일정이 열리면 그 뒤로는 가입·탈퇴가 주기 시작일로 제한된다.
+ */
+export async function startSchedule(db: Firestore, uid: string, data: Data, nowMs: number): Promise<{ periodId: string }> {
+  const partyId = text(data, "partyId", 64);
+  const partyRef = db.doc(`parties/${partyId}`);
+
+  return db.runTransaction(async (tx) => {
+    const party = (await tx.get(partyRef)).data();
+    if (!party || party.leaderUid !== uid) {
+      throw new HttpsError("permission-denied", "파티장만 일정을 시작할 수 있습니다.", { reason: "not-leader" });
+    }
+    const period = currentPeriod(party.cycle as Cycle, nowMs);
+    const scheduleRef = partyRef.collection("schedules").doc(period.id);
+    if ((await tx.get(scheduleRef)).exists) {
+      throw new HttpsError("already-exists", "이번 주기 일정이 이미 열려 있습니다.", { reason: "already-started" });
+    }
+    const durationMinutes = durationMinutesOf(party);
+    if (nowMs + durationMinutes * 60 * 1000 > period.endMs) {
+      throw new HttpsError("failed-precondition", "이번 주기에 남은 시간이 없습니다. 다음 주기에 자동으로 시작됩니다.", {
+        reason: "no-time-left",
+      });
+    }
+    const endOfToday = startOfKstDay(nowMs) + 24 * 60 * 60 * 1000;
+    tx.create(scheduleRef, newScheduleData(period, durationMinutes, Math.min(endOfToday, period.endMs)));
+    tx.update(partyRef, { scheduleStarted: true });
+    return { periodId: period.id };
   });
 }

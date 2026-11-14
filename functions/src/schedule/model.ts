@@ -11,13 +11,20 @@ export interface Candidate {
 }
 
 /** 새 주기의 일정 문서 초깃값 */
-export function newScheduleData(period: Period, durationMinutes: number): DocumentData {
+/**
+ * @param inputDeadlineMs 불가 시간 입력 마감. 주기 중간에 시작한 일정은 시작한 날 23:59로 따로 준다.
+ */
+export function newScheduleData(
+  period: Period,
+  durationMinutes: number,
+  inputDeadlineMs: number = period.inputDeadlineMs,
+): DocumentData {
   return {
     state: "OPEN" satisfies ScheduleState,
     cycle: period.cycle,
     periodStart: Timestamp.fromMillis(period.startMs),
     periodEnd: Timestamp.fromMillis(period.endMs),
-    inputDeadline: Timestamp.fromMillis(period.inputDeadlineMs),
+    inputDeadline: Timestamp.fromMillis(inputDeadlineMs),
     // 실제 소요 시간(분). 20분 단위로 잡을 수 있다.
     durationMinutes,
     // 시간표는 30분 칸이라, 추천과 충돌 검사는 소요 시간을 덮는 칸 수로 한다 (40분 → 2칸).
@@ -43,6 +50,16 @@ export function newScheduleData(period: Period, durationMinutes: number): Docume
     updatedAt: Timestamp.now(),
   };
 }
+
+/** 파티 선호 시간대: 요일(1=월 ~ 7=일)과 하루 안의 30분 칸 범위 [startRow, endRow) */
+export interface PreferredWindow {
+  days: number[];
+  startRow: number;
+  endRow: number;
+}
+
+/** 최소 여유 시간의 기본값(분). 지금으로부터 이 시간 안에 시작하는 후보는 추천하지 않는다. */
+export const DEFAULT_MIN_LEAD_MINUTES = 180;
 
 /** 소요 시간을 덮는 데 필요한 30분 칸 수 */
 export function slotsForMinutes(durationMinutes: number): number {

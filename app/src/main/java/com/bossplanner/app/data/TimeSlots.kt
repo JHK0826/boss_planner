@@ -28,6 +28,9 @@ object TimeSlots {
     /** "11/14(토) 20:00 ~ 21:00" */
     fun range(startMs: Long, endMs: Long): String = "${dateTime(startMs)} ~ ${time(endMs)}"
 
+    /** "11/14 (토)" */
+    fun dayWithWeekday(ms: Long): String = "${dayLabel(ms)} (${weekdayLabel(ms)})"
+
     /** ms가 속한 KST 날짜의 00:00. 변경 요청 마감(전날 23:59) 계산에 쓴다. */
     fun startOfDay(ms: Long): Long = at(ms).toLocalDate().atStartOfDay(KST).toInstant().toEpochMilli()
 

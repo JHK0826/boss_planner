@@ -243,15 +243,51 @@ class PartyRepository(
         bosses: List<PartyBoss>,
         durationMinutes: Int,
         characterId: String,
-    ): String = call(
-        "createParty",
-        mapOf(
+        preferredWindow: PreferredWindow?,
+        minLeadMinutes: Int,
+    ): String {
+        val data = mutableMapOf<String, Any>(
             "name" to name,
             "bosses" to bosses.map { mapOf("name" to it.name, "difficulty" to it.difficulty) },
             "durationMinutes" to durationMinutes,
             "characterId" to characterId,
-        ),
-    )["partyId"] as? String ?: ""
+            "minLeadMinutes" to minLeadMinutes,
+        )
+        if (preferredWindow != null) data["preferredWindow"] = preferredWindow.toMap()
+        return call("createParty", data)["partyId"] as? String ?: ""
+    }
+
+    /** 파티장이 다음 주기를 기다리지 않고 이번 주기 일정을 지금 연다. */
+    suspend fun startSchedule(partyId: String) {
+        call("startSchedule", mapOf("partyId" to partyId))
+    }
+
+    /** 파티장이 추천 설정을 바꾼다. 조율 중이면 서버가 후보를 다시 계산한다. */
+    suspend fun updatePartyPreferences(partyId: String, preferredWindow: PreferredWindow?, minLeadMinutes: Int) {
+        // 선호 시간대를 없앨 때는 null을 보내야 한다.
+        val data = HashMap<String, Any?>()
+        data["partyId"] = partyId
+        data["minLeadMinutes"] = minLeadMinutes
+        data["preferredWindow"] = preferredWindow?.toMap()
+        functions.getHttpsCallable("updatePartyPreferences").call(data).await()
+    }
+
+    /**
+     * 파티원들이 파티에 넣은 캐릭터의 이미지 주소 (uid → 주소).
+     * 각자의 캐릭터 정보 캐시(users/{uid}/characters/{characterId})에서 읽는다. 없으면 빠진다.
+     */
+    suspend fun memberImages(party: Party): Map<String, String> =
+        party.members.values.mapNotNull { member ->
+            if (member.characterId.isEmpty()) return@mapNotNull null
+            val url = runCatching {
+                db.collection("users").document(member.uid).collection("characters").document(member.characterId)
+                    .get().await().getString("imageUrl")
+            }.getOrNull()
+            if (url.isNullOrEmpty()) null else member.uid to url
+        }.toMap()
+
+    private fun PreferredWindow.toMap(): Map<String, Any> =
+        mapOf("days" to days, "startRow" to startRow, "endRow" to endRow)
 
     /** @return 가입한 파티 ID */
     suspend fun joinParty(inviteCode: String, characterId: String): String =
@@ -307,6 +343,15 @@ class PartyRepository(
             members = members,
             inviteCode = doc.getString("inviteCode").orEmpty(),
             scheduleStarted = doc.getBoolean("scheduleStarted") ?: false,
+            preferredWindow = (doc.get("preferredWindow") as? Map<*, *>)?.let { w ->
+                PreferredWindow(
+                    days = (w["days"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
+                    startRow = (w["startRow"] as? Number)?.toInt() ?: return@let null,
+                    endRow = (w["endRow"] as? Number)?.toInt() ?: return@let null,
+                )
+            },
+            // 설정이 없는 예전 파티에는 서버 기본값(3시간)이 적용된다.
+            minLeadMinutes = doc.getLong("minLeadMinutes")?.toInt() ?: 180,
         )
     }
 

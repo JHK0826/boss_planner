@@ -23,10 +23,17 @@ data class Party(
     val members: Map<String, PartyMember>,
     val inviteCode: String,
     val scheduleStarted: Boolean,
+    /** 추천할 때 우선하는 시간대. 없으면 null */
+    val preferredWindow: PreferredWindow?,
+    /** 지금으로부터 이 시간(분) 안에 시작하는 후보는 추천하지 않는다 */
+    val minLeadMinutes: Int,
 ) {
     val isWeekly: Boolean get() = cycle == "WEEKLY"
     val bossLabel: String get() = Bosses.label(bosses)
 }
+
+/** 파티 선호 시간대: 요일(1=월 ~ 7=일)과 하루 안의 30분 칸 범위 [startRow, endRow) */
+data class PreferredWindow(val days: List<Int>, val startRow: Int, val endRow: Int)
 
 data class Candidate(val slotId: String, val startMs: Long, val endMs: Long)
 

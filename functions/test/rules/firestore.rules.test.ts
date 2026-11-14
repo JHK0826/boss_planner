@@ -160,6 +160,13 @@ describe("votes", () => {
     await assertFails(updateDoc(doc(db(MEMBER), `${SCHEDULE}/votes/${LEADER}`), { agreed: [] }));
     await assertSucceeds(getDoc(doc(db(MEMBER), `${SCHEDULE}/votes/${LEADER}`)));
   });
+
+  it("후보가 여섯 개여도 모두 동의할 수 있다", async () => {
+    const all = { agreed: [0, 1, 2, 3, 4, 5], round: 1, updatedAt: serverTimestamp() };
+    await assertSucceeds(setDoc(doc(db(MEMBER), `${SCHEDULE}/votes/${MEMBER}`), all));
+    const tooMany = { ...all, agreed: Array.from({ length: 13 }, (_, i) => i) };
+    await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/votes/${MEMBER}`), tooMany));
+  });
 });
 
 describe("clears", () => {

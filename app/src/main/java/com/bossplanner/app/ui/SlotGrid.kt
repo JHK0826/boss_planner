@@ -49,7 +49,7 @@ private val CELL_HEIGHT = 28.dp
 private val MIN_CELL_WIDTH = 40.dp
 
 /** 범위 채우기에서 고르는 요일 묶음 */
-private val DAY_CHOICES: List<Pair<String, Set<Int>>> =
+internal val DAY_CHOICES: List<Pair<String, Set<Int>>> =
     listOf("매일" to (1..7).toSet(), "평일" to setOf(1, 2, 3, 4, 5), "주말" to setOf(6, 7)) +
         WEEKDAY_NAMES.mapIndexed { index, name -> "${name}요일" to setOf(index + 1) }
 
@@ -118,7 +118,7 @@ fun BulkFillPanel(
 
 /** 현재 값을 보여 주는 버튼. 누르면 선택지가 펼쳐진다. onSelect에는 고른 항목의 순번을 넘긴다. */
 @Composable
-private fun Dropdown(label: String, options: List<String>, enabled: Boolean, onSelect: (Int) -> Unit) {
+internal fun Dropdown(label: String, options: List<String>, enabled: Boolean, onSelect: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(enabled = enabled, onClick = { open = true }) { Text(label) }

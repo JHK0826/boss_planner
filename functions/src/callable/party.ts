@@ -30,6 +30,15 @@ export const leaveParty = onCall({ region: REGION }, (request) =>
   service.leaveParty(getFirestore(), requireUid(request), request.data, Date.now()),
 );
 
+export const startSchedule = onCall({ region: REGION }, (request) =>
+  service.startSchedule(getFirestore(), requireUid(request), request.data, Date.now()),
+);
+
+export const updatePartyPreferences = onCall({ region: REGION }, async (request) => {
+  await service.updatePartyPreferences(getFirestore(), requireUid(request), request.data, Date.now());
+  return { ok: true };
+});
+
 export const delegateLeader = onCall({ region: REGION }, async (request) => {
   await service.delegateLeader(getFirestore(), requireUid(request), request.data, Date.now());
   return { ok: true };
