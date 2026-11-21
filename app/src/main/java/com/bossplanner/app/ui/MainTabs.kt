@@ -39,6 +39,7 @@ import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
 import com.bossplanner.app.data.CharacterInfo
 import com.bossplanner.app.data.Party
+import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
 import com.bossplanner.app.data.RoutineRepository
 import com.bossplanner.app.data.TimeSlots
@@ -80,14 +81,57 @@ fun CharactersTab(characters: List<CharacterInfo>, onEditCharacters: () -> Unit)
     }
 }
 
-/** 파티: 내 파티 목록, 파티 만들기, 초대 코드로 가입 */
+/** 파티 목록 정렬 */
+enum class PartySort(val label: String) {
+    Character("캐릭터순"),
+    Name("파티 이름순"),
+    Recent("최근 가입순"),
+}
+
+/**
+ * 파티: 내 파티 목록, 파티 만들기, 초대 코드로 가입.
+ * 캐릭터를 골라 그 캐릭터가 들어간 파티만 볼 수 있고, 목록을 정렬할 수 있다.
+ *
+ * @param characterFilter 이 캐릭터(characterId)가 들어간 파티만 본다. null이면 전체
+ */
 @Composable
 fun PartiesTab(
+    uid: String,
     parties: List<Party>,
+    characterFilter: String?,
+    onCharacterFilterChange: (String?) -> Unit,
+    sort: PartySort,
+    onSortChange: (PartySort) -> Unit,
     onOpenParty: (partyId: String) -> Unit,
     onCreateParty: () -> Unit,
     onJoinParty: () -> Unit,
 ) {
+    // 내 파티에 들어가 있는 내 캐릭터들 (레벨 높은 순)과 캐릭터별 파티 수
+    val myCharacters = parties.mapNotNull { it.members[uid] }
+        .distinctBy { it.characterId }
+        .sortedWith(compareByDescending<PartyMember> { it.level }.thenBy { it.characterName })
+    val partyCount = parties.groupingBy { it.members[uid]?.characterId }.eachCount()
+    // 고른 캐릭터의 파티가 없어졌으면(탈퇴 등) 전체로 돌아간다.
+    val activeFilter = characterFilter?.takeIf { id -> myCharacters.any { it.characterId == id } }
+    LaunchedEffect(activeFilter, characterFilter) {
+        if (characterFilter != null && activeFilter == null) onCharacterFilterChange(null)
+    }
+
+    val mine = { party: Party -> party.members[uid] }
+    val shown = parties
+        .filter { activeFilter == null || mine(it)?.characterId == activeFilter }
+        .let { list ->
+            when (sort) {
+                PartySort.Character -> list.sortedWith(
+                    compareByDescending<Party> { mine(it)?.level ?: 0 }
+                        .thenBy { mine(it)?.characterName.orEmpty() }
+                        .thenBy { it.name },
+                )
+                PartySort.Name -> list.sortedBy { it.name }
+                PartySort.Recent -> list.sortedByDescending { mine(it)?.joinedAtMs ?: 0 }
+            }
+        }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = TAB_PADDING),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -101,14 +145,41 @@ fun PartiesTab(
         }
         if (parties.isEmpty()) {
             item { Text("아직 가입한 파티가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+        } else {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val selected = myCharacters.firstOrNull { it.characterId == activeFilter }
+                    Dropdown(
+                        label = selected?.let { "${it.characterName} (${partyCount[it.characterId] ?: 0})" }
+                            ?: "전체 캐릭터 (${parties.size})",
+                        options = listOf("전체 캐릭터 (${parties.size})") +
+                            myCharacters.map { "${it.characterName} · Lv.${it.level} (${partyCount[it.characterId] ?: 0})" },
+                        enabled = true,
+                        onSelect = { index -> onCharacterFilterChange(if (index == 0) null else myCharacters[index - 1].characterId) },
+                        modifier = Modifier.weight(1f),
+                        fillWidth = true,
+                    )
+                    Dropdown(
+                        label = sort.label,
+                        options = PartySort.entries.map { it.label },
+                        enabled = true,
+                        onSelect = { onSortChange(PartySort.entries[it]) },
+                    )
+                }
+            }
         }
-        items(parties, key = { it.id }) { party ->
+        items(shown, key = { it.id }) { party ->
+            val me = mine(party)
             Card(modifier = Modifier.fillMaxWidth().clickable { onOpenParty(party.id) }) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(party.name, style = MaterialTheme.typography.titleMedium)
                     Text(party.bossLabel, style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "${if (party.isWeekly) "주간" else "월간"} · ${party.memberUids.size}명",
+                        listOfNotNull(
+                            if (party.isWeekly) "주간" else "월간",
+                            "${party.memberUids.size}명",
+                            me?.let { "내 캐릭터 ${it.characterName} (Lv.${it.level})" },
+                        ).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

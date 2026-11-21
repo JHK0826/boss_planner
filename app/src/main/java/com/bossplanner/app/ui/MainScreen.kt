@@ -72,6 +72,9 @@ fun MainScreen(
     partyRepository: PartyRepository = remember { PartyRepository() },
 ) {
     var tab by rememberSaveable { mutableStateOf(Tab.Parties) }
+    // 파티 목록의 캐릭터 선택과 정렬. 다른 메뉴나 파티 화면에 다녀와도 유지한다.
+    var partyFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var partySort by rememberSaveable { mutableStateOf(PartySort.Character) }
     var screen by remember { mutableStateOf<Screen?>(null) }
     var characters by remember { mutableStateOf<List<CharacterInfo>>(emptyList()) }
     val parties by remember(uid) { partyRepository.myParties(uid) }.collectAsStateWithLifecycle(emptyList())
@@ -111,7 +114,12 @@ fun MainScreen(
                 when (tab) {
                     Tab.Characters -> CharactersTab(characters = characters, onEditCharacters = onEditCharacters)
                     Tab.Parties -> PartiesTab(
+                        uid = uid,
                         parties = parties,
+                        characterFilter = partyFilter,
+                        onCharacterFilterChange = { partyFilter = it },
+                        sort = partySort,
+                        onSortChange = { partySort = it },
                         onOpenParty = { screen = Screen.PartyDetail(it) },
                         onCreateParty = { screen = Screen.CreateParty },
                         onJoinParty = { screen = Screen.JoinParty },

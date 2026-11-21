@@ -330,6 +330,7 @@ class PartyRepository(
                 job = m["job"] as? String ?: "",
                 level = (m["level"] as? Number)?.toInt() ?: 0,
                 characterId = m["characterId"] as? String ?: "",
+                joinedAtMs = (m["joinedAt"] as? Timestamp)?.toMillis() ?: 0,
             )
         }.toMap()
         return Party(

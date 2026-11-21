@@ -30,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.bossplanner.app.data.TimeSlots
@@ -118,10 +120,24 @@ fun BulkFillPanel(
 
 /** 현재 값을 보여 주는 버튼. 누르면 선택지가 펼쳐진다. onSelect에는 고른 항목의 순번을 넘긴다. */
 @Composable
-internal fun Dropdown(label: String, options: List<String>, enabled: Boolean, onSelect: (Int) -> Unit) {
+internal fun Dropdown(
+    label: String,
+    options: List<String>,
+    enabled: Boolean,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    /** true면 버튼이 주어진 자리를 가로로 꽉 채운다 (modifier로 폭을 정할 때 쓴다) */
+    fillWidth: Boolean = false,
+) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(enabled = enabled, onClick = { open = true }) { Text(label) }
+    Box(modifier = modifier) {
+        OutlinedButton(
+            enabled = enabled,
+            onClick = { open = true },
+            modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
+        ) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEachIndexed { index, option ->
                 DropdownMenuItem(
