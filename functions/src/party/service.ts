@@ -204,8 +204,6 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
   const preferences = parsePreferences(data);
   const member = await loadMember(db, uid, characterId);
   await assertNoBossOverlap(db, uid, characterId, bosses, null);
-  const startsNow = isCycleStartDay(cycle, nowMs);
-  const period = currentPeriod(cycle, nowMs);
   const partyRef = db.collection("parties").doc();
 
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -226,11 +224,12 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
         memberUids: [uid],
         members: { [uid]: member },
         inviteCode,
-        // 주기 시작일에 만든 파티는 바로 이번 주기 일정을 연다. 아니면 다음 주기부터 시작한다.
-        scheduleStarted: startsNow,
-        createdAt: Timestamp.now(),
+        // 만든 주기에는 일정을 자동으로 열지 않는다. 파티원을 모은 뒤 파티장이 startSchedule로 연다.
+        // 열지 않으면 다음 주기 시작 때 자동으로 열린다(openSchedules).
+        scheduleStarted: false,
+        // openSchedules가 "이번 주기에 만든 파티"를 가려낼 때 쓴다.
+        createdAt: Timestamp.fromMillis(nowMs),
       });
-      if (startsNow) tx.create(partyRef.collection("schedules").doc(period.id), newScheduleData(period, durationMinutes));
       return true;
     });
     if (created) return { partyId: partyRef.id, inviteCode };

@@ -65,9 +65,19 @@ const WEEK = ["20261112", "20261113", "20261114", "20261115", "20261116", "20261
 const allExcept = (ymd: string, fromHour: number, toHour: number) =>
   WEEK.flatMap((d) => day(d)).filter((slot) => !day(ymd, fromHour, toHour).includes(slot));
 
-/** 목요일에 a가 만들고 b가 가입한 2인 파티 */
+/**
+ * 파티를 만들고 파티장이 바로 이번 주기 일정을 연다(시작 버튼).
+ * 만든 주기에는 일정이 자동으로 열리지 않으므로, 일정이 필요한 테스트는 이것을 쓴다.
+ */
+async function createStarted(uid: string, input: Record<string, unknown>, now = THU) {
+  const created = await createParty(db, uid, input, now);
+  await startSchedule(db, uid, { partyId: created.partyId }, now);
+  return created;
+}
+
+/** 목요일에 a가 만들어 시작하고 b가 가입한 2인 파티 */
 async function twoMemberParty() {
-  const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+  const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
   await join("b", inviteCode, THU);
   return partyId;
 }
@@ -86,7 +96,7 @@ beforeEach(async () => {
 });
 
 describe("createParty", () => {
-  it("목요일에 만들면 이번 주기 일정이 바로 열린다", async () => {
+  it("목요일에 만들어도 일정은 열리지 않고, 파티장이 시작해야 열린다", async () => {
     const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
 
     const party = (await db.doc(`parties/${partyId}`).get()).data()!;
@@ -97,13 +107,43 @@ describe("createParty", () => {
       cycle: "WEEKLY",
       durationMinutes: 60,
       durationSlots: 2,
-      scheduleStarted: true,
+      scheduleStarted: false,
     });
+    expect(party.createdAt.toMillis()).toBe(THU);
     expect(party.members.a).toMatchObject({ characterName: "캐릭-a", level: 280 });
     expect(JSON.stringify(party)).not.toContain("ocid");
     expect(inviteCode).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
     expect((await db.doc(`inviteCodes/${inviteCode}`).get()).get("partyId")).toBe(partyId);
+    expect((await db.collection(`parties/${partyId}/schedules`).get()).size).toBe(0);
+
+    // 시작하기 전에는 목요일이 아니어도 가입할 수 있다.
+    await join("b", inviteCode, FRI);
+
+    await startSchedule(db, "a", { partyId }, THU);
     expect(await schedule(partyId)).toMatchObject({ state: "OPEN", round: 0, candidates: [] });
+    expect((await schedule(partyId))!.inputDeadline.toMillis()).toBe(kst("2026-11-13T00:00:00"));
+    expect((await db.doc(`parties/${partyId}`).get()).get("scheduleStarted")).toBe(true);
+  });
+
+  it("만든 주기에는 주기 시작 작업이 돌아도 일정을 열지 않고, 다음 주기에 연다", async () => {
+    // 목요일 00:01에 만들었는데 예약 작업이 늦게(00:05) 돈 경우
+    const { partyId } = await createParty(db, "a", partyInput("a"), kst("2026-11-12T00:01:00"));
+    expect(await openSchedules(db, "WEEKLY", kst("2026-11-12T00:05:00"))).toBe(0);
+    expect((await db.collection(`parties/${partyId}/schedules`).get()).size).toBe(0);
+    expect((await db.doc(`parties/${partyId}`).get()).get("scheduleStarted")).toBe(false);
+
+    // 시작하지 않고 한 주가 지나면 다음 주기에 자동으로 열린다.
+    expect(await openSchedules(db, "WEEKLY", kst("2026-11-19T00:00:00"))).toBe(1);
+    expect((await db.doc(`parties/${partyId}/schedules/W-20261119`).get()).get("state")).toBe("OPEN");
+    expect((await db.doc(`parties/${partyId}`).get()).get("scheduleStarted")).toBe(true);
+  });
+
+  it("월간 보스 파티도 만든 달에는 자동으로 열지 않는다", async () => {
+    const monthly = partyInput("a", { bosses: [{ name: "검은 마법사", difficulty: "HARD" }] });
+    const { partyId } = await createParty(db, "a", monthly, kst("2026-12-01T10:00:00"));
+    expect(await openSchedules(db, "MONTHLY", kst("2026-12-01T10:30:00"))).toBe(0);
+    expect(await openSchedules(db, "MONTHLY", kst("2027-01-01T00:00:00"))).toBe(1);
+    expect((await db.doc(`parties/${partyId}/schedules/M-202701`).get()).exists).toBe(true);
   });
 
   it("다른 요일에 만들면 다음 주기부터 시작한다", async () => {
@@ -281,7 +321,7 @@ describe("추천 설정", () => {
   const WEEKEND_NIGHT = { days: [6, 7], startRow: 42, endRow: 48 };
 
   it("선호 시간대 안의 시각을 먼저 추천한다", async () => {
-    const { partyId } = await createParty(db, "a", partyInput("a", { preferredWindow: WEEKEND_NIGHT }), THU);
+    const { partyId } = await createStarted("a", partyInput("a", { preferredWindow: WEEKEND_NIGHT }));
     expect((await db.doc(`parties/${partyId}`).get()).get("preferredWindow")).toEqual(WEEKEND_NIGHT);
     await submit(partyId, "a", []);
     await evaluateSchedule(db, partyId, PERIOD, THU);
@@ -294,7 +334,7 @@ describe("추천 설정", () => {
   });
 
   it("최소 여유 시간 안쪽은 추천하지 않는다. 기본값은 3시간이다", async () => {
-    const { partyId } = await createParty(db, "a", partyInput("a", { minLeadMinutes: undefined }), THU);
+    const { partyId } = await createStarted("a", partyInput("a", { minLeadMinutes: undefined }));
     expect((await db.doc(`parties/${partyId}`).get()).get("minLeadMinutes")).toBe(180);
     await submit(partyId, "a", []);
     await evaluateSchedule(db, partyId, PERIOD, THU);
@@ -303,7 +343,7 @@ describe("추천 설정", () => {
   });
 
   it("여유 시간을 지키면 남는 시각이 없을 때는 여유 시간 없이 추천한다", async () => {
-    const { partyId } = await createParty(db, "a", partyInput("a", { minLeadMinutes: 1440 }), THU);
+    const { partyId } = await createStarted("a", partyInput("a", { minLeadMinutes: 1440 }));
     // 오늘 12~13시만 가능
     await submit(partyId, "a", allExcept("20261112", 12, 13));
     await evaluateSchedule(db, partyId, PERIOD, THU);
@@ -327,7 +367,7 @@ describe("추천 설정", () => {
   });
 
   it("파티장이 설정을 바꾸면 후보를 다시 계산한다", async () => {
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
     await join("b", inviteCode, THU);
     await submit(partyId, "a", []);
     await submit(partyId, "b", []);
@@ -362,7 +402,7 @@ describe("여러 파티를 함께 고려", () => {
 
   /** 토요일 20:00~22:30만 가능한 1시간 30분짜리 파티. 가능한 시작은 20:00, 20:30, 21:00이고 서로 겹친다. */
   async function ninetyMinuteParty(members: string[]) {
-    const { partyId, inviteCode } = await createParty(db, "c", partyInput("c", { ...OTHER, durationMinutes: 90 }), THU);
+    const { partyId, inviteCode } = await createStarted("c", partyInput("c", { ...OTHER, durationMinutes: 90 }));
     for (const uid of members) await join(uid, inviteCode, THU);
     await submit(partyId, "c", [...allExcept("20261114", 20, 23), "20261114-2230"]);
     for (const uid of members) await submit(partyId, uid, []);
@@ -372,7 +412,7 @@ describe("여러 파티를 함께 고려", () => {
 
   /** a와 b의 파티: 토요일 20:00~21:00이 후보로 올라 투표 중이다. */
   async function partyVotingOnSaturdayEight() {
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
     await join("b", inviteCode, THU);
     await submit(partyId, "a", allExcept("20261114", 20, 21));
     await submit(partyId, "b", []);
@@ -397,7 +437,7 @@ describe("여러 파티를 함께 고려", () => {
     await db.doc("users/b/busy/20261114-2100").set({ partyId: "other" });
     await db.doc("users/b/busy/20261114-2130").set({ partyId: "other" });
 
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
     await join("b", inviteCode, THU);
     // 토요일 12~24시 가능 → 21:00대를 빼면 정각 시작이 11개라 6개만 뽑힌다.
     await submit(partyId, "a", allExcept("20261114", 12, 24));
@@ -418,7 +458,7 @@ describe("여러 파티를 함께 고려", () => {
 
 describe("소요 시간", () => {
   it("20분 단위 소요 시간은 30분 칸에서 시작하고, 끝나는 시각은 실제 소요 시간으로 잡는다", async () => {
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a", { durationMinutes: 20 }), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a", { durationMinutes: 20 }));
     await join("b", inviteCode, THU);
     await submit(partyId, "a", allExcept("20261114", 20, 21));
     await submit(partyId, "b", []);
@@ -432,7 +472,7 @@ describe("소요 시간", () => {
   });
 
   it("40분은 30분 칸 두 개가 비어 있어야 한다", async () => {
-    const { partyId } = await createParty(db, "a", partyInput("a", { durationMinutes: 40 }), THU);
+    const { partyId } = await createStarted("a", partyInput("a", { durationMinutes: 40 }));
     // 20:00~20:30만 비면 부족하고, 21:00~22:00은 충분하다.
     await submit(partyId, "a", allExcept("20261114", 21, 22).filter((slot) => slot !== "20261114-2000"));
     await evaluateSchedule(db, partyId, PERIOD, THU);
@@ -451,7 +491,7 @@ describe("가입·탈퇴·위임 시기", () => {
   });
 
   it("주기가 시작된 파티는 목요일에만 가입·탈퇴·위임할 수 있다", async () => {
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
     await join("b", inviteCode, THU);
 
     const notStartDay = { code: "failed-precondition", details: { reason: "not-start-day" } };
@@ -464,7 +504,7 @@ describe("가입·탈퇴·위임 시기", () => {
   });
 
   it("일정이 확정된 뒤에는 목요일이어도 가입·탈퇴할 수 없다", async () => {
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
     await join("b", inviteCode, THU);
     await db.doc(`parties/${partyId}/schedules/${PERIOD}`).update({ state: "LOCKED" });
 
@@ -635,7 +675,7 @@ describe("추천과 투표", () => {
   });
 
   it("가입하면 후보가 비워지고, 탈퇴하면 남은 사람 기준으로 다시 계산한다", async () => {
-    const { partyId, inviteCode } = await createParty(db, "a", partyInput("a"), THU);
+    const { partyId, inviteCode } = await createStarted("a", partyInput("a"));
     await join("b", inviteCode, THU);
     await submit(partyId, "a", []);
     await submit(partyId, "b", []);

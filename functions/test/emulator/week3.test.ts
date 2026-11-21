@@ -2,7 +2,7 @@ import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp, type Firestore } from "firebase-admin/firestore";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NexonBossContent } from "../../src/nexon/client";
-import { createParty, joinParty, leaveParty } from "../../src/party/service";
+import { createParty, joinParty, leaveParty, startSchedule } from "../../src/party/service";
 import { approveChange, requestChange } from "../../src/schedule/change";
 import { resolveRaidResult, runDailyClearCheck } from "../../src/schedule/clear";
 import { confirmSchedule } from "../../src/schedule/confirm";
@@ -70,6 +70,8 @@ async function partyReadyToConfirm(
     THU,
   );
   for (const uid of members) await joinParty(db, uid, { inviteCode, characterId: `char-${uid}` }, THU);
+  // 만든 주기에는 일정이 자동으로 열리지 않는다. 파티원을 모은 뒤 파티장이 시작한다.
+  await startSchedule(db, leader, { partyId }, THU);
   const all = [leader, ...members];
   await submit(partyId, leader, allExcept(...free));
   for (const uid of members) await submit(partyId, uid, []);

@@ -154,7 +154,7 @@ fun PartyScreen(
                     if (party.scheduleStarted) {
                         "가입·탈퇴·위임은 ${if (party.isWeekly) "목요일" else "매월 1일"}에, 일정이 확정되기 전에만 할 수 있습니다."
                     } else {
-                        "첫 주기가 시작되기 전까지는 언제든 가입할 수 있습니다."
+                        "첫 일정을 시작하기 전까지는 언제든 가입할 수 있습니다."
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -448,7 +448,8 @@ private fun ScheduleSection(
         when {
             loading -> CircularProgressIndicator()
             schedule == null -> Text(
-                "아직 시작된 주기가 없습니다. 다음 ${if (party.isWeekly) "목요일" else "달 1일"} 00:00에 첫 일정이 열립니다.",
+                "아직 일정이 시작되지 않았습니다. 파티장이 '이번 주기 지금 시작'을 누르면 바로 열리고, " +
+                    "누르지 않으면 다음 ${if (party.isWeekly) "목요일" else "달 1일"} 00:00에 자동으로 열립니다.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             schedule.state == "SKIPPED" -> Text(
