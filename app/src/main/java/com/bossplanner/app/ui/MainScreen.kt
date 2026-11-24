@@ -45,9 +45,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bossplanner.app.data.CharacterInfo
 import com.bossplanner.app.data.Party
+import com.bossplanner.app.data.EarningsRepository
 import com.bossplanner.app.data.PartyRepository
 import com.bossplanner.app.data.UserProfile
 import com.bossplanner.app.data.UserRepository
+import com.bossplanner.app.data.userMessage
 
 /** 하단 메뉴. 순서대로 보인다. */
 private enum class Tab(val label: String, val icon: ImageVector) {
@@ -65,6 +67,7 @@ private sealed interface Screen {
     data class PartyDetail(val partyId: String, val tab: PartyTab? = null) : Screen
     data class EditUnavailable(val partyId: String, val target: UnavailableTarget) : Screen
     data object Routine : Screen
+    data class Earnings(val characterId: String) : Screen
 }
 
 /**
@@ -82,6 +85,7 @@ fun MainScreen(
     onSignOut: () -> Unit,
     users: UserRepository = remember { UserRepository() },
     partyRepository: PartyRepository = remember { PartyRepository() },
+    earningsRepository: EarningsRepository = remember { EarningsRepository() },
 ) {
     var tab by rememberSaveable { mutableStateOf(Tab.Parties) }
     // 파티 목록의 캐릭터 선택과 정렬. 다른 메뉴나 파티 화면에 다녀와도 유지한다.
@@ -149,11 +153,35 @@ fun MainScreen(
         }
     }
 
+    // 게임 스케줄러: 내 캐릭터 탭이나 수익 화면을 처음 열 때 받는다. 서버가 10분 동안 저장해 두므로 NEXON 호출은 적다.
+    var scheduler by remember(profile.selectedCharacterIds) { mutableStateOf(SchedulerUiState()) }
+    var schedulerRequest by remember(profile.selectedCharacterIds) { mutableStateOf<Boolean?>(null) }
+    val wantsScheduler = (screen == null && tab == Tab.Characters) || screen is Screen.Earnings
+    LaunchedEffect(wantsScheduler, profile.selectedCharacterIds) {
+        if (wantsScheduler && scheduler.characters == null && schedulerRequest == null) schedulerRequest = false
+    }
+    LaunchedEffect(schedulerRequest) {
+        val refresh = schedulerRequest ?: return@LaunchedEffect
+        scheduler = scheduler.copy(loading = true)
+        scheduler = try {
+            SchedulerUiState(characters = earningsRepository.schedulerState(refresh), loading = false, error = null)
+        } catch (e: Exception) {
+            scheduler.copy(loading = false, error = e.userMessage())
+        }
+        schedulerRequest = null
+    }
+
     when (val current = screen) {
         null -> Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
-                    Tab.Characters -> CharactersTab(characters = characters, onEditCharacters = onEditCharacters)
+                    Tab.Characters -> CharactersTab(
+                        characters = characters,
+                        scheduler = scheduler,
+                        onRefresh = { if (schedulerRequest == null) schedulerRequest = true },
+                        onOpenEarnings = { screen = Screen.Earnings(it) },
+                        onEditCharacters = onEditCharacters,
+                    )
                     Tab.Parties -> PartiesTab(
                         uid = uid,
                         // 목록을 받기 전에는 null을 넘겨 로딩 표시를 보여 준다.
@@ -218,6 +246,14 @@ fun MainScreen(
             parties = partyRepository,
         )
         Screen.Routine -> RoutineScreen(uid = uid, onDone = { screen = null })
+        is Screen.Earnings -> EarningsScreen(
+            uid = uid,
+            character = characters?.firstOrNull { it.id == current.characterId },
+            characterId = current.characterId,
+            scheduler = scheduler,
+            onBack = { screen = null },
+            repository = earningsRepository,
+        )
         is Screen.EditUnavailable -> UnavailableScreen(
             uid = uid,
             partyId = current.partyId,

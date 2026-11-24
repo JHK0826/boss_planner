@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
 import com.bossplanner.app.data.CharacterInfo
+import com.bossplanner.app.data.CharacterScheduler
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
@@ -54,29 +55,75 @@ import com.bossplanner.app.data.UserProfile
 
 private val TAB_PADDING = 24.dp
 
-/** 내 캐릭터: 보스에 참여하도록 골라 둔 캐릭터를 본다. */
+/** 게임 스케줄러를 받아 오는 상태 (MainScreen이 들고 있다) */
+data class SchedulerUiState(
+    val characters: Map<String, CharacterScheduler>? = null,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
+/** 내 캐릭터: 골라 둔 캐릭터와 게임 스케줄러에 등록한 보스(클리어 여부, 파티 인원수)를 본다. */
 @Composable
-fun CharactersTab(characters: List<CharacterInfo>?, onEditCharacters: () -> Unit) {
+fun CharactersTab(
+    characters: List<CharacterInfo>?,
+    scheduler: SchedulerUiState,
+    onRefresh: () -> Unit,
+    onOpenEarnings: (characterId: String) -> Unit,
+    onEditCharacters: () -> Unit,
+) {
+    val fetchedAt = scheduler.characters?.values?.mapNotNull { it.fetchedAtMs }?.minOrNull()
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = TAB_PADDING),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { TabTitle("내 캐릭터") }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when {
+                        scheduler.loading -> "스케줄러를 받아 오는 중…"
+                        fetchedAt != null -> "게임 스케줄러 · ${TimeSlots.dateTime(fetchedAt)} 기준"
+                        else -> "게임 스케줄러"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(enabled = !scheduler.loading, onClick = onRefresh) { Text("새로고침") }
+            }
+            scheduler.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        }
         when {
             characters == null -> item { Loading() }
             characters.isEmpty() -> item { Text("선택한 캐릭터가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
         }
         items(characters.orEmpty(), key = { it.id }) { character ->
+            val state = scheduler.characters?.get(character.id)
             Card(modifier = Modifier.fillMaxWidth()) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(model = character.imageUrl, contentDescription = null, modifier = Modifier.size(72.dp))
-                    Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text(character.name, style = MaterialTheme.typography.titleMedium)
-                        Text("Lv.${character.level} · ${character.job}", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            listOfNotNull(character.world, character.guild?.takeIf { it.isNotBlank() }).joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        AsyncImage(model = character.imageUrl, contentDescription = null, modifier = Modifier.size(72.dp))
+                        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(character.name, style = MaterialTheme.typography.titleMedium)
+                            Text("Lv.${character.level} · ${character.job}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                listOfNotNull(character.world, character.guild?.takeIf { it.isNotBlank() }).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            if (state != null) {
+                                Text(
+                                    "주간 ${state.bosses.count { it.isWeekly }} · 월간 ${state.bosses.count { !it.isWeekly }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        TextButton(onClick = { onOpenEarnings(character.id) }) { Text("수익 보기") }
+                    }
+                    state?.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                    if (state != null && state.bosses.isNotEmpty()) BossChips(state.bosses)
+                    if (state != null && state.bosses.isEmpty() && state.error == null) {
+                        Text("게임 스케줄러에 등록한 보스가 없습니다.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -441,7 +488,7 @@ private fun StatusBadge(status: PartyStatus) {
 
 /** 목록을 받아 오는 동안 보여 주는 표시 */
 @Composable
-private fun Loading() {
+internal fun Loading() {
     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
         CircularProgressIndicator()
     }
