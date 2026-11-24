@@ -2,12 +2,31 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 // 앱 버전은 저장소 최상위의 version.properties 한 곳에서 관리한다 (Android 앱과 같은 번호).
 const versionName =
   readFileSync(new URL("../version.properties", import.meta.url), "utf8").match(/^versionName=(.+)$/m)?.[1] ?? "?";
+
+/**
+ * NEXON Open API 애널리틱스 (애플리케이션 app_id 368630).
+ * 배포용 빌드에만 넣는다: 개발 서버와 E2E 테스트에서는 외부로 요청하지 않는다.
+ */
+const NEXON_ANALYTICS_APP_ID = "368630";
+function nexonAnalytics(): Plugin {
+  return {
+    name: "nexon-analytics",
+    apply: "build",
+    transformIndexHtml: () => [
+      {
+        tag: "script",
+        attrs: { type: "text/javascript", src: `https://openapi.nexon.com/js/analytics.js?app_id=${NEXON_ANALYTICS_APP_ID}`, async: true },
+        injectTo: "head",
+      },
+    ],
+  };
+}
 
 export default defineConfig({
   define: {
@@ -21,6 +40,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    nexonAnalytics(),
     VitePWA({
       registerType: "autoUpdate",
       // 알림(Firebase Cloud Messaging)을 받으려고 서비스 워커를 직접 쓴다: src/sw.ts
