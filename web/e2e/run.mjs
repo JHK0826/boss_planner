@@ -41,22 +41,6 @@ async function seedApiKey(uid, characterId, name, level) {
   await db.doc(`users/${uid}`).set({ apiKeyRegistered: true }, { merge: true });
 }
 
-/** callable을 그 사용자 이름으로 부른다 (아직 웹 화면이 없는 동작용). */
-async function callAs(email, password, name, data) {
-  const signIn = await fetch("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo-key", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  }).then((r) => r.json());
-  const response = await fetch(`http://127.0.0.1:5001/${PROJECT}/asia-northeast3/${name}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${signIn.idToken}` },
-    body: JSON.stringify({ data }),
-  }).then((r) => r.json());
-  if (response.error) throw new Error(`${name}: ${response.error.message}`);
-  return response.result;
-}
-
 process.env.VITE_USE_EMULATORS = "true";
 const server = await createServer({ root: webDir, logLevel: "error", server: { port: 5173, strictPort: true } });
 await server.listen();
@@ -139,8 +123,27 @@ try {
   await b.getByText("파티에 가입했습니다").waitFor();
   step("초대 코드(소문자로 입력해도 됨)로 가입한다");
 
-  // ---------- 일정 시작 → 할 일 표시 ----------
-  await callAs("a@test.com", "password1", "startSchedule", { partyId: partyDoc.id });
+  // ---------- 파티장이 파티 화면에서 일정 시작 → 할 일 표시 ----------
+  await a.getByText("스우팟").click();
+  await a.getByText("파티원 2명").waitFor();
+  await a.getByRole("button", { name: "이번 주기 지금 시작" }).click();
+  await a.getByRole("dialog", { name: "이번 주기 지금 시작" }).getByRole("button", { name: "시작" }).click();
+  await a.getByText("이번 주기 일정을 시작했습니다").waitFor();
+  await a.getByText("불가 시간 제출 0/2명", { exact: false }).waitFor();
+  step("파티장이 파티 화면에서 '이번 주기 지금 시작'으로 일정을 연다");
+
+  // 실행 시각에 따라 이번 주기가 거의 끝나 있을 수 있어서, 주기를 모레부터 7일로 옮겨 추천 후보가 늘 나오게 한다.
+  const scheduleRef = (await db.collection(`parties/${partyDoc.id}/schedules`).get()).docs[0].ref;
+  const DAY = 24 * 60 * 60 * 1000;
+  const KST = 9 * 60 * 60 * 1000;
+  const periodStart = Math.floor((Date.now() + KST) / DAY) * DAY - KST + 2 * DAY;
+  await scheduleRef.update({
+    periodStart: Timestamp.fromMillis(periodStart),
+    periodEnd: Timestamp.fromMillis(periodStart + 7 * DAY),
+    inputDeadline: Timestamp.fromMillis(periodStart),
+  });
+
+  await a.getByRole("button", { name: "← 파티 목록" }).click();
   await a.getByText("할 일 · 불가 시간 입력").waitFor();
   await a.getByText("할 일이 있는 파티 1개").waitFor();
   assert.equal(await a.locator(".tabs .count").textContent(), "1");
@@ -173,6 +176,80 @@ try {
   await a.getByText("할 일 · 불가 시간 입력").waitFor();
   await shot(a, "05-dark");
   step("다크 모드를 켜면 바로 바뀌고 새로고침해도 유지된다");
+
+  // ---------- 불가 시간 제출 (고정 불가 시간으로 미리 채워짐) ----------
+  await a.getByText("스우팟").click();
+  await a.getByRole("button", { name: "불가 시간 입력" }).click();
+  await a.getByText("고정 불가 시간으로 채워 두었습니다.", { exact: false }).waitFor();
+  await shot(a, "06-unavailable");
+  await a.getByRole("button", { name: "제출 (불가 180칸)" }).click();
+  await a.getByText("불가 시간을 제출했습니다").waitFor();
+  await a.getByText("불가 시간 제출 1/2명", { exact: false }).waitFor();
+  assert.equal((await scheduleRef.collection("unavailable").doc(uidA).get()).get("slots").length, 180);
+  step("불가 시간 화면이 고정 불가 시간으로 채워져 있고, 그대로 제출한다");
+
+  await b.getByText("스우팟").click();
+  await b.getByRole("button", { name: "불가 시간 입력" }).click();
+  await b.getByRole("button", { name: "제출 (불가 0칸)" }).click();
+  await b.getByText("불가 시간을 제출했습니다").waitFor();
+  step("안 되는 시간이 없는 파티원도 제출한다 → 서버가 추천 시간을 낸다");
+
+  // ---------- 투표 → 확정 ----------
+  await b.getByRole("button", { name: "모두 가능" }).click();
+  await b.getByRole("button", { name: "투표하기" }).click();
+  await b.getByText("투표했습니다").waitFor();
+  await b.getByRole("button", { name: "투표 바꾸기" }).waitFor();
+
+  await a.getByRole("button", { name: "모두 가능" }).click();
+  await a.getByRole("button", { name: "모두 해제" }).waitFor();
+  await a.getByRole("button", { name: "투표하기" }).click();
+  await a.getByText("전원이 동의한 시간 중 하나를 확정해 주세요.").waitFor();
+  await shot(a, "07-voting");
+  step("요일별로 묶인 후보에 '모두 가능'으로 투표하면 전원 동의가 된다");
+
+  await a.locator("[role=button]", { hasText: "비숍짱" }).click();
+  const timetable = a.getByRole("dialog", { name: "비숍님의 불가 시간" });
+  await timetable.getByText("제출함", { exact: false }).waitFor();
+  await shot(a, "08-member-timetable");
+  await timetable.getByRole("button", { name: "닫기" }).click();
+  step("파티원을 누르면 그 파티원의 불가 시간표가 보인다");
+
+  await a.getByRole("button", { name: "확정", exact: true }).first().click();
+  await a.getByRole("dialog", { name: "일정 확정" }).getByRole("button", { name: "확정" }).click();
+  await a.getByText("일정을 확정했습니다").waitFor();
+  await a.getByText("확정된 시간").waitFor();
+  assert.equal((await scheduleRef.get()).get("state"), "LOCKED");
+  await shot(a, "09-locked");
+  step("파티장이 전원 동의 시간을 확정한다");
+
+  // ---------- 변경 요청 → 거절 ----------
+  await b.getByRole("button", { name: "일정 변경 요청" }).click();
+  const changeDialog = b.getByRole("dialog", { name: "일정 변경 요청" });
+  await changeDialog.getByLabel("사유 (선택)").fill("개인 사정");
+  await changeDialog.getByRole("button", { name: "요청" }).click();
+  await b.getByText("변경을 요청했습니다. 파티장의 승인을 기다립니다").waitFor();
+  await a.getByText("사유: 개인 사정", { exact: false }).waitFor();
+  await a.getByRole("button", { name: "거절" }).click();
+  await a.getByText("변경 요청을 거절했습니다").waitFor();
+  await b.getByText("변경 요청이 거절되었습니다.").waitFor();
+  step("파티원이 변경을 요청하고 파티장이 거절한다");
+
+  // ---------- 레이드 후 클리어 기록 ----------
+  // 확정 시간을 이미 지난 시간으로 옮긴다 (기록은 레이드가 시작된 뒤에만 받는다).
+  const confirmed = (await scheduleRef.get()).get("confirmed");
+  await scheduleRef.update({
+    confirmed: { ...confirmed, start: Timestamp.fromMillis(Date.now() - 60 * 60 * 1000), end: Timestamp.fromMillis(Date.now() - 20 * 60 * 1000) },
+  });
+  await a.reload();
+  await a.getByText("레이드가 끝났나요? 결과를 기록해 주세요.").waitFor();
+  await a.getByRole("button", { name: "클리어", exact: true }).click();
+  await a.getByRole("dialog", { name: "클리어 기록" }).getByRole("button", { name: "기록" }).click();
+  await a.getByText("클리어로 기록했습니다").waitFor();
+  await a.getByText("클리어 완료", { exact: false }).waitFor();
+  await a.getByRole("button", { name: "분배금 등록·정산 채팅" }).waitFor();
+  assert.equal((await scheduleRef.get()).get("state"), "SETTLED");
+  await shot(a, "10-settled");
+  step("레이드가 끝나면 클리어를 기록하고 정산 버튼이 나온다");
 
   assert.deepEqual(errors, [], `브라우저 오류:\n${errors.join("\n")}`);
   console.log("E2E 통과");

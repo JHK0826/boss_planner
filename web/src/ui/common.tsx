@@ -91,10 +91,23 @@ export const useTheme = () => useContext(ThemeContext);
 
 // ---------- 확인 대화상자 ----------
 
-export function Dialog({ title, children, actions, onClose }: { title: string; children: ReactNode; actions: ReactNode; onClose: () => void }) {
+/** @param wide 시간표처럼 넓은 내용을 보여 줄 때 화면을 거의 다 쓴다. */
+export function Dialog({
+  title,
+  children,
+  actions,
+  onClose,
+  wide = false,
+}: {
+  title: string;
+  children: ReactNode;
+  actions: ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+}) {
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
+      <div className={`dialog ${wide ? "wide" : ""}`} role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <h2 style={{ margin: 0 }}>{title}</h2>
         {children}
         <div className="actions">{actions}</div>

@@ -40,6 +40,7 @@ import type {
   UserProfile,
   Vote,
 } from "../lib/model";
+import { acceptsInput } from "../lib/model";
 import { millis, toBosses, toParty, toSchedule } from "../lib/parse";
 import { type PartySnapshot, sameTargets, snapshotTargets } from "../lib/partyStatus";
 import { combineAll, constant, type Subscribe, withDetails } from "../lib/subscribe";
@@ -266,6 +267,103 @@ export async function createParty(input: {
 export async function joinParty(inviteCode: string, characterId: string): Promise<string> {
   const result = await call<{ partyId?: string }>("joinParty", { inviteCode, characterId });
   return result.partyId ?? "";
+}
+
+// ---------- 일정 (파티 화면) ----------
+
+/** 파티의 가장 최근 일정을 한 번만 읽는다. 없으면 null */
+export async function latestScheduleOnce(partyId: string): Promise<Schedule | null> {
+  const snapshot = await getDocs(query(scheduleCol(partyId), orderBy("periodStart", "desc"), limit(1)));
+  const first = snapshot.docs[0];
+  return first ? toSchedule(first.id, first.data()) : null;
+}
+
+/** 일정 하나를 한 번만 읽는다. 없으면 null */
+export async function scheduleOnce(partyId: string, periodId: string): Promise<Schedule | null> {
+  const snapshot = await getDoc(scheduleDoc(partyId, periodId));
+  return toSchedule(snapshot.id, snapshot.data());
+}
+
+/** 이번 주기 내 불가 시간을 한 번만 읽는다. 아직 저장한 적이 없으면 null */
+export async function myUnavailableOnce(partyId: string, periodId: string, uid: string): Promise<Unavailable | null> {
+  const snapshot = await getDoc(doc(scheduleDoc(partyId, periodId), "unavailable", uid));
+  if (!snapshot.exists()) return null;
+  return { slots: (snapshot.get("slots") as string[] | undefined) ?? [], submitted: snapshot.get("submitted") === true };
+}
+
+export const setUnavailable = (partyId: string, periodId: string, uid: string, slots: string[], submitted: boolean) =>
+  setDoc(doc(scheduleDoc(partyId, periodId), "unavailable", uid), { slots: [...slots].sort(), submitted, updatedAt: serverTimestamp() });
+
+export const setVote = (partyId: string, periodId: string, uid: string, agreed: number[], round: number) =>
+  setDoc(doc(scheduleDoc(partyId, periodId), "votes", uid), { agreed: [...agreed].sort((a, b) => a - b), round, updatedAt: serverTimestamp() });
+
+/** 레이드가 끝난 뒤 결과를 직접 기록한다. 서버가 바로 SETTLED / RETRY / EXPIRED로 넘긴다. */
+export const recordClear = (partyId: string, periodId: string, uid: string, cleared: boolean) =>
+  setDoc(doc(scheduleDoc(partyId, periodId), "clears", uid), { result: cleared ? "CLEARED" : "NOT_CLEARED", recordedAt: serverTimestamp() });
+
+/** 파티장이 전원 동의 후보를 확정한다. 다른 파티 일정과 겹치면 서버가 거절한다. */
+export const confirmSchedule = (partyId: string, periodId: string, candidateIndex: number) =>
+  call("confirmSchedule", { partyId, periodId, candidateIndex });
+
+export const requestChange = (partyId: string, periodId: string, reason: string) => call("requestChange", { partyId, periodId, reason });
+
+export const respondToChange = (partyId: string, periodId: string, approve: boolean) => call("approveChange", { partyId, periodId, approve });
+
+/** 파티장이 다음 주기를 기다리지 않고 이번 주기 일정을 지금 연다. */
+export const startSchedule = (partyId: string) => call("startSchedule", { partyId });
+
+/** 파티장이 추천 설정을 바꾼다. 선호 시간대를 없앨 때는 null을 보낸다. 조율 중이면 서버가 후보를 다시 계산한다. */
+export const updatePartyPreferences = (partyId: string, preferredWindow: PreferredWindow | null, minLeadMinutes: number) =>
+  call("updatePartyPreferences", { partyId, preferredWindow, minLeadMinutes });
+
+export const leaveParty = (partyId: string) => call("leaveParty", { partyId });
+
+export const delegateLeader = (partyId: string, newLeaderUid: string) => call("delegateLeader", { partyId, newLeaderUid });
+
+/**
+ * 파티원들이 파티에 넣은 캐릭터의 이미지 주소 (uid → 주소).
+ * 각자의 캐릭터 정보 캐시(users/{uid}/characters/{characterId})에서 읽는다. 없으면 빠진다.
+ */
+export async function memberImages(p: Party): Promise<Record<string, string>> {
+  const entries = await Promise.all(
+    Object.values(p.members).map(async (member): Promise<[string, string] | null> => {
+      if (!member.characterId) return null;
+      try {
+        const url = (await getDoc(doc(db, "users", member.uid, "characters", member.characterId))).get("imageUrl");
+        return typeof url === "string" && url ? [member.uid, url] : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return Object.fromEntries(entries.filter((e): e is [string, string] => e !== null));
+}
+
+/**
+ * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출하고, 제출한 파티 수를 돌려준다.
+ * 주기가 다른 파티(주간 ↔ 월간)나 이미 확정된 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
+ */
+export async function submitToOtherParties(
+  otherParties: Party[],
+  period: { periodStartMs: number; periodEndMs: number },
+  uid: string,
+  slots: string[],
+): Promise<number> {
+  let submitted = 0;
+  for (const other of otherParties) {
+    try {
+      const schedule = await latestScheduleOnce(other.id);
+      if (!schedule) continue;
+      const samePeriod = schedule.periodStartMs === period.periodStartMs && schedule.periodEndMs === period.periodEndMs;
+      if (acceptsInput(schedule) && samePeriod) {
+        await setUnavailable(other.id, schedule.id, uid, slots, true);
+        submitted++;
+      }
+    } catch {
+      // 이 파티는 건너뛴다. 그 파티 화면에서 따로 제출할 수 있다.
+    }
+  }
+  return submitted;
 }
 
 // ---------- 고정 불가 시간 ----------

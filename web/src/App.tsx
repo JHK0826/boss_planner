@@ -14,6 +14,8 @@ import { CreatePartyScreen } from "./screens/CreatePartyScreen";
 import { JoinPartyScreen } from "./screens/JoinPartyScreen";
 import { PartyScreen } from "./screens/PartyScreen";
 import { RoutineScreen } from "./screens/RoutineScreen";
+import { SettlementScreen } from "./screens/SettlementScreen";
+import { UnavailableScreen } from "./screens/UnavailableScreen";
 import { CharactersTab, PartiesTab, SettingsTab, TimetableTab } from "./screens/tabs";
 import { Loading } from "./ui/common";
 
@@ -48,6 +50,8 @@ export function App() {
         <Route path="parties/new" element={<CreatePartyScreen />} />
         <Route path="parties/join" element={<JoinPartyScreen />} />
         <Route path="parties/:partyId" element={<PartyScreen />} />
+        <Route path="parties/:partyId/unavailable/:periodId" element={<UnavailableScreen />} />
+        <Route path="parties/:partyId/settlement/:periodId" element={<SettlementScreen />} />
         <Route path="characters/select" element={<CharacterSelectScreen uid={uid} initiallySelected={profile.selectedCharacterIds} editing />} />
         <Route path="settings/api-key" element={<ApiKeyScreen editing />} />
         <Route path="timetable/routine" element={<RoutineScreen />} />
