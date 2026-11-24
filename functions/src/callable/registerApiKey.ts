@@ -1,6 +1,7 @@
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { toPublicCharacters, toSecretCharacters, type PublicCharacter } from "../characters";
+import { syncPartyMembers } from "../characterRefresh";
 import { REGION } from "../config";
 import { NexonClient } from "../nexon/client";
 import { toHttpsError } from "../nexon/errors";
@@ -40,6 +41,8 @@ export const registerApiKey = onCall({ region: REGION }, async (request): Promis
     { merge: true },
   );
   await batch.commit();
+  // 키를 다시 등록한 경우: 파티에 옮겨 적은 캐릭터 정보도 새 목록으로 맞춘다.
+  await syncPartyMembers(db, uid, characters);
 
   return { characters: toPublicCharacters(characters) };
 });

@@ -82,9 +82,18 @@ fun CharactersTab(characters: List<CharacterInfo>?, onEditCharacters: () -> Unit
             }
         }
         item {
-            OutlinedButton(onClick = onEditCharacters, modifier = Modifier.fillMaxWidth().padding(bottom = TAB_PADDING)) {
+            OutlinedButton(onClick = onEditCharacters, modifier = Modifier.fillMaxWidth()) {
                 Text("캐릭터 다시 선택")
             }
+        }
+        // NEXON Open API 이용 조건: 받은 데이터를 보여 주는 화면에 출처를 적는다.
+        item {
+            Text(
+                NEXON_ATTRIBUTION,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = TAB_PADDING),
+            )
         }
     }
 }
@@ -255,8 +264,12 @@ fun SettingsTab(profile: UserProfile, onEditApiKey: () -> Unit, onSignOut: () ->
         OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("로그아웃") }
         // 파티원끼리 같은 버전을 쓰는지 확인할 수 있게 보여 준다.
         Text("버전 $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(NEXON_ATTRIBUTION, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+
+/** NEXON Open API 출처 표기 (이용 조건) */
+private const val NEXON_ATTRIBUTION = "Data based on NEXON Open API"
 
 private val TIME_LABEL_WIDTH = 44.dp
 private val TIMETABLE_CELL_HEIGHT = 18.dp

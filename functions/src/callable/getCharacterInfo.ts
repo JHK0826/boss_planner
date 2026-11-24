@@ -1,6 +1,7 @@
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import type { SecretCharacter } from "../characters";
+import { syncPartyMembers } from "../characterRefresh";
 import { CHARACTER_INFO_TTL_MS, REGION } from "../config";
 import { NexonClient } from "../nexon/client";
 import { toHttpsError } from "../nexon/errors";
@@ -73,5 +74,6 @@ export const getCharacterInfo = onCall({ region: REGION }, async (request): Prom
   };
   const { id: _id, ...fields } = info;
   await cacheRef.set({ ...fields, fetchedAt: FieldValue.serverTimestamp() });
+  await syncPartyMembers(db, uid, { [characterId]: info });
   return info;
 });
