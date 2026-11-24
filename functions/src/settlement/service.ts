@@ -1,5 +1,6 @@
-import { Timestamp, type Firestore } from "firebase-admin/firestore";
+import { Timestamp, type DocumentReference, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
+import { recordSettlementEarnings } from "../earnings/service";
 import { requireString } from "../schedule/confirm";
 import type { Confirmed } from "../schedule/model";
 import { FEE_PERCENTS, MAX_SALE_AMOUNT, MAX_WEIGHT, computeSettlement } from "./calc";
@@ -98,7 +99,7 @@ export async function registerSettlement(db: Firestore, uid: string, data: Data)
   const { scheduleRef, settlementRef } = refs(db, data);
   const plan = planner(uid, data);
 
-  return db.runTransaction(async (tx) => {
+  const result = await db.runTransaction(async (tx) => {
     const schedule = (await tx.get(scheduleRef)).data();
     const participants = (schedule?.confirmed as Confirmed | null)?.memberUids ?? [];
     if (!schedule || !participants.includes(uid)) {
@@ -138,6 +139,17 @@ export async function registerSettlement(db: Firestore, uid: string, data: Data)
     });
     return { recipients: recipients.length };
   });
+  await recordEarnings(db, scheduleRef);
+  return result;
+}
+
+/** 수익 기록은 보조 기능이라 실패해도 정산 요청은 성공으로 돌려준다. */
+async function recordEarnings(db: Firestore, scheduleRef: DocumentReference): Promise<void> {
+  try {
+    await recordSettlementEarnings(db, scheduleRef);
+  } catch (error) {
+    console.error("recordSettlementEarnings failed", (error as Error).message);
+  }
 }
 
 /** 판매자가 한 파티원에게 지급했다고 표시한다: 대기 → 지급함 */
@@ -161,7 +173,7 @@ export async function markPaid(db: Firestore, uid: string, data: Data): Promise<
 export async function confirmReceived(db: Firestore, uid: string, data: Data): Promise<{ completed: boolean }> {
   const { scheduleRef, settlementRef } = refs(db, data);
 
-  return db.runTransaction(async (tx) => {
+  const result = await db.runTransaction(async (tx) => {
     const all = await tx.get(settlementRef);
     const mine = all.docs.find((doc) => doc.id === uid);
     if (!mine) {
@@ -180,4 +192,6 @@ export async function confirmReceived(db: Firestore, uid: string, data: Data): P
     }
     return { completed };
   });
+  await recordEarnings(db, scheduleRef);
+  return result;
 }

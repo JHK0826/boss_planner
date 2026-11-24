@@ -1,17 +1,19 @@
 // 정산 탭: 클리어한 일정의 분배금 정산과 채팅. 정산할 주기가 여러 개면(이번 주기 + 끝나지 않은 지난 주기) 위에서 고른다.
 import { useNavigate, useParams } from "react-router-dom";
-import { type Schedule, settlementOpen } from "../../lib/model";
+import type { Schedule } from "../../lib/model";
 import { dateTime } from "../../lib/time";
 import { Loading } from "../../ui/common";
 import { SettlementContent } from "../SettlementScreen";
 import { useParty } from "./context";
 
-/** 정산 탭에서 고를 수 있는 주기: 클리어한 이번 주기(정산이 끝났어도) + 정산이 끝나지 않은 지난 주기 */
+/** 정산 탭에서 고를 수 있는 주기: 최근 주기 중 클리어한 주기 전부. 정산이 끝난 주기도 내역을 다시 볼 수 있게 남긴다. */
 export function settlementPeriods(schedules: Schedule[]): Schedule[] {
-  return schedules.filter((s, i) => (i === 0 ? s.state === "SETTLED" : settlementOpen(s)));
+  return schedules.filter((s) => s.state === "SETTLED");
 }
 
-const periodLabel = (schedule: Schedule) => (schedule.confirmed ? `${dateTime(schedule.confirmed.startMs)} 레이드` : schedule.id);
+const periodLabel = (schedule: Schedule) =>
+  (schedule.confirmed ? `${dateTime(schedule.confirmed.startMs)} 레이드` : schedule.id) +
+  (schedule.settlement?.completed ? " · 정산 완료" : "");
 
 export function SettlementTab() {
   const { uid, party, schedules } = useParty();

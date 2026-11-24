@@ -530,8 +530,8 @@ private fun ScheduleTab(
 /** 정산 탭: 정산할 주기가 여러 개면(이번 주기 + 끝나지 않은 지난 주기) 위에서 고른다. */
 @Composable
 private fun SettlementTab(uid: String, party: Party, schedules: List<Schedule>, loading: Boolean, parties: PartyRepository) {
-    // 클리어한 이번 주기(정산이 끝났어도) + 정산이 끝나지 않은 지난 주기
-    val periods = schedules.filterIndexed { index, s -> if (index == 0) s.state == "SETTLED" else s.settlementOpen }
+    // 최근 주기 중 클리어한 주기 전부. 정산이 끝난 주기도 내역을 다시 볼 수 있게 남긴다.
+    val periods = schedules.filter { it.state == "SETTLED" }
     var chosen by rememberSaveable(party.id) { mutableStateOf<String?>(null) }
     val selected = chosen?.takeIf { id -> periods.any { it.id == id } } ?: periods.firstOrNull()?.id
 
@@ -553,7 +553,12 @@ private fun SettlementTab(uid: String, party: Party, schedules: List<Schedule>, 
                             FilterChip(
                                 selected = period.id == selected,
                                 onClick = { chosen = period.id },
-                                label = { Text(period.confirmed?.let { "${TimeSlots.dateTime(it.startMs)} 레이드" } ?: period.id) },
+                                label = {
+                                    Text(
+                                        (period.confirmed?.let { "${TimeSlots.dateTime(it.startMs)} 레이드" } ?: period.id) +
+                                            if (period.settlement?.completed == true) " · 정산 완료" else "",
+                                    )
+                                },
                             )
                         }
                     }

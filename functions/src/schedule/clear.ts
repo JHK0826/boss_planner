@@ -1,6 +1,7 @@
 import { Timestamp, type DocumentReference, type Firestore } from "firebase-admin/firestore";
 import type { SecretCharacter } from "../characters";
-import { refreshStaleCharacterInfo, refreshStaleCharacterLists } from "../characterRefresh";
+import { deleteStaleSchedulerCaches, refreshStaleCharacterInfo, refreshStaleCharacterLists } from "../characterRefresh";
+import { finalizeEarnings } from "../earnings/service";
 import { SLOT_MS, kstDateString } from "../domain/time";
 import { bossesOf } from "../domain/bosses";
 import { NexonClient, allBossesCompleted } from "../nexon/client";
@@ -104,6 +105,7 @@ export async function checkClearByApi(
 
 /**
  * 매일 05:00: 직접 기록이 없는 일정(VERIFYING)을 API로 확인하고, 오래된 캐릭터 목록·기본 정보를 다시 받는다.
+ * 목요일·1일에는 끝난 주·달의 결정석 수익을 확정한다.
  */
 export async function runDailyClearCheck(
   db: Firestore,
@@ -131,5 +133,7 @@ export async function runDailyClearCheck(
 
   await refreshStaleCharacterLists(db, nowMs, makeClient);
   await refreshStaleCharacterInfo(db, nowMs, makeClient);
+  await deleteStaleSchedulerCaches(db, nowMs);
+  await finalizeEarnings(db, nowMs, makeClient);
   return counts;
 }

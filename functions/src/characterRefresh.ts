@@ -1,9 +1,10 @@
 /**
  * NEXON에서 받아 저장한 캐릭터 데이터를 30일 안에 다시 받는다 (NEXON Open API 데이터 갱신 의무).
  *
- * 저장하는 곳은 세 군데다.
+ * 저장하는 곳은 네 군데다.
  * - secrets/{uid}.characters: 캐릭터 목록(ocid 포함). charactersFetchedAt 기준
  * - users/{uid}/characters/{characterId}: 캐릭터 기본 정보 캐시(레벨, 이미지). fetchedAt 기준
+ * - users/{uid}/scheduler/{characterId}: 스케줄러에 등록한 보스 캐시. fetchedAt 기준, 오래되면 지운다
  * - parties/{id}.members.{uid}: 가입할 때 옮겨 적은 캐릭터 이름·직업·레벨·월드
  *
  * 앞의 두 곳을 다시 받을 때마다 파티에 옮겨 적은 값도 같이 맞춘다.
@@ -80,6 +81,20 @@ export async function refreshStaleCharacterLists(
     }
   }
   return refreshed;
+}
+
+/**
+ * 받아 온 지 오래된 스케줄러 캐시(users/{uid}/scheduler)를 지운다. 내 캐릭터 탭을 열면 다시 받는다.
+ * 수익 기록(earnings)에는 합계만 있어 지우지 않는다. @returns 지운 수
+ */
+export async function deleteStaleSchedulerCaches(db: Firestore, nowMs: number, limit = 200): Promise<number> {
+  const stale = await db
+    .collectionGroup("scheduler")
+    .where("fetchedAt", "<", Timestamp.fromMillis(nowMs - CHARACTER_REFRESH_AFTER_MS))
+    .limit(limit)
+    .get();
+  await Promise.all(stale.docs.map((doc) => doc.ref.delete()));
+  return stale.size;
 }
 
 /**
