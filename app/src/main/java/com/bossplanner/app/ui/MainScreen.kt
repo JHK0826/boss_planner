@@ -19,10 +19,13 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.produceState
+import com.bossplanner.app.data.PartySnapshot
 import com.bossplanner.app.data.PartyStatuses
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -87,15 +90,22 @@ fun MainScreen(
     var characters by remember { mutableStateOf<List<CharacterInfo>>(emptyList()) }
     val parties by remember(uid) { partyRepository.myParties(uid) }.collectAsStateWithLifecycle(emptyList())
 
-    // 파티마다 내가 할 일. 일정 데이터는 파티 목록(구성)이 바뀔 때만 다시 구독한다.
+    // 파티마다 내가 할 일.
+    // 일정 데이터는 파티 탭을 보고 있고 앱이 화면에 떠 있을 때만 지켜본다. 다른 화면에 있는 동안은
+    // 마지막으로 읽은 값을 그대로 쓰므로, 하단 메뉴의 숫자는 파티 탭에 돌아올 때 새로 맞춰진다.
+    // 파티 목록(구성)이 바뀔 때만 다시 구독한다.
     val partyIds = parties.map { it.id }
-    val snapshots by remember(partyIds) {
-        if (partyIds.isEmpty()) {
-            flowOf(emptyMap())
-        } else {
+    var snapshots by remember { mutableStateOf<Map<String, PartySnapshot>>(emptyMap()) }
+    val watchStatuses = screen == null && tab == Tab.Parties
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(partyIds, watchStatuses) {
+        snapshots = snapshots.filterKeys { it in partyIds }
+        if (!watchStatuses || partyIds.isEmpty()) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             combine(partyIds.map { id -> partyRepository.partySnapshot(id).map { id to it } }) { it.toMap() }
+                .collect { snapshots = it }
         }
-    }.collectAsStateWithLifecycle(emptyMap())
+    }
     // 레이드 시작처럼 시간이 지나서 바뀌는 할 일이 있어 1분마다 다시 계산한다.
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
