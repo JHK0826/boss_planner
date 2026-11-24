@@ -377,10 +377,13 @@ try {
 
   await card.getByRole("button", { name: "수익 보기" }).click();
   await a.getByRole("heading", { name: "루시드짱 수익" }).waitFor();
-  // 가격표를 아직 받지 않아 결정석은 0으로 계산하고 미등록 보스를 알려 준다.
-  await a.getByText("가격 미등록 (0으로 계산): 스우(EX), 데미안(H), 검은 마법사(H)").waitFor();
-  // 판매자(파티장)의 몫: 실수령 9500만 - 48,717,900 = 46,282,100
+  // 예상 = 익스트림 스우 5억 4500만 ÷ 2 + 하드 데미안 4640만 ÷ 2 + (이번 달 아직 안 잡은) 하드 검은 마법사 4억 6500만
+  await a.getByRole("region", { name: "이번 주 예상 수익" }).getByText("7억 6070만 메소").waitFor();
+  assert.equal(await a.getByText("가격 미등록", { exact: false }).count(), 0);
+  // 이번 주 = 클리어한 익스트림 스우 2억 7250만 + 판매자(파티장) 몫 46,282,100 (실수령 9500만 - 48,717,900)
   const thisWeek = a.getByRole("region", { name: "이번 주에 번 돈" });
+  await thisWeek.getByText("3억 1878만 2100 메소").waitFor();
+  await thisWeek.getByText("272,500,000메소").waitFor();
   await thisWeek.getByText("46,282,100메소").first().waitFor();
   await thisWeek.getByText("스우팟", { exact: false }).waitFor();
   await a.locator(".month-row", { hasText: "46,282,100메소" }).waitFor();

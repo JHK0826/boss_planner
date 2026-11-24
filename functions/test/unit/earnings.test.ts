@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { crystalPrice, crystalPriceList } from "../../src/domain/crystals";
+import { BOSS_CATALOG } from "../../src/domain/bosses";
+import { CRYSTAL_PRICES, crystalPrice, crystalPriceList } from "../../src/domain/crystals";
 import {
   clearedSummary,
   monthIdOf,
@@ -19,6 +20,23 @@ describe("결정석 가격표", () => {
     expect(crystalPrice("스우", "hard", prices)).toBe(300_000_000);
     expect(crystalPrice("스우", "EXTREME", prices)).toBeNull();
     expect(crystalPriceList(prices)).toContainEqual({ name: "검은 마법사", difficulty: "HARD", price: 1_000_000_000 });
+  });
+
+  it("파티로 갈 수 있는 보스·난이도는 모두 가격이 있다 (보스를 추가하면 가격도 넣어야 한다)", () => {
+    const combos = BOSS_CATALOG.flatMap((boss) => boss.difficulties.map((difficulty) => ({ name: boss.name, difficulty })));
+    expect(combos).toHaveLength(56);
+    expect(combos.filter((c) => crystalPrice(c.name, c.difficulty) === null)).toEqual([]);
+    expect(Object.keys(CRYSTAL_PRICES)).toHaveLength(56);
+  });
+
+  it("게임 목록 값과 같고, 이름의 띄어쓰기는 보지 않는다", () => {
+    expect(crystalPrice("발드릭스", "extreme")).toBe(9_600_000_000);
+    expect(crystalPrice("검은 마법사", "EXTREME")).toBe(5_680_000_000);
+    expect(crystalPrice("감시자 칼로스", "EXTREME")).toBe(4_104_000_000);
+    expect(crystalPrice("자쿰", "chaos")).toBe(4_040_000);
+    // 게임 목록은 "블러디 퀸", 스케줄러 API와 보스 목록은 "블러디퀸"
+    expect(crystalPrice("블러디 퀸", "CHAOS")).toBe(4_070_000);
+    expect(crystalPrice("블러디퀸", "CHAOS")).toBe(4_070_000);
   });
 });
 
