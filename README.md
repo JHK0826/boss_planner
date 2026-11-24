@@ -530,6 +530,30 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 
 `app/build/outputs/apk/debug/boss-planner-<버전>-debug.apk`가 만들어집니다. 개발 중 시험용입니다. 디버그 키로 서명되어 릴리스 APK와 서명이 다르므로 서로 덮어 설치되지 않습니다. 파티원에게 배포할 APK는 [버전 관리](#버전-관리)의 절차로 만든 릴리스 APK를 쓰세요.
 
+### 웹앱 (아이폰·PC용, 개발 중)
+
+Android 앱과 같은 서버를 쓰는 웹앱을 `web/`에 만들고 있습니다(React + TypeScript + Vite, PWA). 아이폰은 Safari에서 열어 "홈 화면에 추가"해서 씁니다. 지금은 로그인·온보딩, 하단 메뉴 4개(내 캐릭터·파티·시간표·설정), 파티 만들기·코드로 가입, 고정 불가 시간까지 들어 있고, 파티 화면(일정·투표·정산)과 푸시 알림은 이어서 추가합니다.
+
+서버의 순수 계산 코드(`functions/src/domain/time.ts`, `functions/src/settlement/calc.ts`)는 복사하지 않고 그대로 가져다 씁니다.
+
+**처음 한 번**
+
+1. Firebase 콘솔 → 프로젝트 설정 → 앱 추가 → 웹. 나온 설정값을 `web/.env.example`을 참고해 `web/.env.local`에 넣습니다(커밋하지 않음).
+2. Firebase 콘솔에서 Hosting을 시작합니다. 주소는 `https://<프로젝트 ID>.web.app`입니다.
+
+**개발·테스트·배포**
+
+```bash
+cd web
+npm install
+npm run dev        # 개발 서버
+npm test           # 단위 테스트
+npm run e2e        # Firebase 에뮬레이터에 붙여 브라우저(Chromium)로 실제 흐름을 돌리는 테스트 (Java 필요)
+npx --prefix ../functions firebase deploy --project <프로젝트 ID> --only hosting
+```
+
+배포하면 `firebase.json`의 설정대로 웹앱을 빌드해서 올립니다. E2E 테스트는 아이폰 크기 화면 캡처를 `web/e2e/screenshots/`에 남깁니다.
+
 ### 폴더 구조
 
 ```text
@@ -546,6 +570,12 @@ functions/              Cloud Functions (TypeScript)
   test/unit/            단위 테스트
   test/rules/           Firestore·Storage 보안 규칙 테스트 (에뮬레이터)
   test/emulator/        파티·일정·정산·알림 통합 테스트 (에뮬레이터)
+web/                    웹앱 (아이폰·PC용 PWA, React + TypeScript + Vite)
+  src/lib/              화면과 무관한 로직 (할 일 계산, 시간표 열, 구독 조합, 문서 파싱)
+  src/data/             Firebase 읽기·쓰기 (Android 앱과 같은 문서·callable)
+  src/screens/          화면
+  test/                 단위 테스트
+  e2e/                  에뮬레이터 + 브라우저 E2E 테스트
 firebase.json           Firebase 배포·에뮬레이터 설정
 firestore.rules         Firestore 보안 규칙
 firestore.indexes.json  Firestore 인덱스
