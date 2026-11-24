@@ -92,6 +92,16 @@ service cloud.firestore {
         allow read: if isSelf(uid);
         allow write: if false;
       }
+
+      // 게임 스케줄러에 등록한 보스 캐시와 수익 기록. Cloud Functions만 쓴다.
+      match /scheduler/{characterId} {
+        allow read: if isSelf(uid);
+        allow write: if false;
+      }
+      match /earnings/{periodId} {
+        allow read: if isSelf(uid);
+        allow write: if false;
+      }
     }
 
     match /parties/{partyId} {

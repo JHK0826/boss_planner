@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import * as api from "./data/api";
 import { configured } from "./firebase";
 import { MainContext, type MainState, type PartySort } from "./main-context";
-import type { CharacterInfo } from "./lib/model";
+import type { CharacterInfo, CharacterScheduler } from "./lib/model";
 import { partyStatus, type PartySnapshot } from "./lib/partyStatus";
 import { combineAll } from "./lib/subscribe";
 import { useNow, usePageVisible, useSessionState, useSubscription } from "./lib/useSubscription";
@@ -11,10 +11,14 @@ import { ApiKeyScreen } from "./screens/ApiKeyScreen";
 import { AuthScreen } from "./screens/AuthScreen";
 import { CharacterSelectScreen } from "./screens/CharacterSelectScreen";
 import { CreatePartyScreen } from "./screens/CreatePartyScreen";
+import { EarningsScreen } from "./screens/EarningsScreen";
 import { JoinPartyScreen } from "./screens/JoinPartyScreen";
-import { PartyScreen } from "./screens/PartyScreen";
+import { PartyIndex, PartyScreen } from "./screens/PartyScreen";
+import { InfoTab } from "./screens/party/InfoTab";
+import { SettingsTab as PartySettingsTab } from "./screens/party/SettingsTab";
+import { SettlementTab } from "./screens/party/SettlementTab";
+import { VoteTab } from "./screens/party/VoteTab";
 import { RoutineScreen } from "./screens/RoutineScreen";
-import { SettlementScreen } from "./screens/SettlementScreen";
 import { UnavailableScreen } from "./screens/UnavailableScreen";
 import { CharactersTab, PartiesTab, SettingsTab, TimetableTab } from "./screens/tabs";
 import { onForegroundPush, refreshPush } from "./lib/push";
@@ -50,10 +54,18 @@ export function App() {
         <Route path="settings" element={<SettingsTab />} />
         <Route path="parties/new" element={<CreatePartyScreen />} />
         <Route path="parties/join" element={<JoinPartyScreen />} />
-        <Route path="parties/:partyId" element={<PartyScreen />} />
+        {/* 파티 화면: 하단 탭 4개. 불가 시간 입력은 탭 없이 전체 화면으로 연다. */}
+        <Route path="parties/:partyId" element={<PartyScreen />}>
+          <Route index element={<PartyIndex />} />
+          <Route path="info" element={<InfoTab />} />
+          <Route path="vote" element={<VoteTab />} />
+          <Route path="settlement" element={<SettlementTab />} />
+          <Route path="settlement/:periodId" element={<SettlementTab />} />
+          <Route path="settings" element={<PartySettingsTab />} />
+        </Route>
         <Route path="parties/:partyId/unavailable/:periodId" element={<UnavailableScreen />} />
-        <Route path="parties/:partyId/settlement/:periodId" element={<SettlementScreen />} />
         <Route path="characters/select" element={<CharacterSelectScreen uid={uid} initiallySelected={profile.selectedCharacterIds} editing />} />
+        <Route path="characters/:characterId/earnings" element={<EarningsScreen />} />
         <Route path="settings/api-key" element={<ApiKeyScreen editing />} />
         <Route path="timetable/routine" element={<RoutineScreen />} />
         <Route path="*" element={<Navigate to="/parties" replace />} />
@@ -112,7 +124,45 @@ function MainLayout({ uid, profile }: { uid: string; profile: MainState["profile
   const statuses = Object.fromEntries((parties ?? []).map((p) => [p.id, partyStatus(uid, p, snapshots[p.id], now)]));
   const todoCount = Object.values(statuses).filter((s) => s?.needsAction).length;
 
-  const state: MainState = { uid, profile, parties, statuses, todoCount, characters, partyFilter, setPartyFilter, partySort, setPartySort };
+  // 게임 스케줄러: 내 캐릭터 탭이나 수익 화면을 처음 열 때 받는다. 서버가 10분 동안 저장해 두므로 자주 불러도 NEXON 호출은 적다.
+  const [scheduler, setScheduler] = useState<Record<string, CharacterScheduler> | undefined>(undefined);
+  const [schedulerLoading, setSchedulerLoading] = useState(false);
+  const [schedulerError, setSchedulerError] = useState<string | null>(null);
+  const schedulerRequested = useRef(false);
+  const loadScheduler = useCallback((refresh = false) => {
+    if (schedulerRequested.current && !refresh) return;
+    schedulerRequested.current = true;
+    setSchedulerLoading(true);
+    api.getSchedulerState(refresh).then(
+      (result) => {
+        setScheduler(result);
+        setSchedulerError(null);
+      },
+      (error) => setSchedulerError(api.userMessage(error)),
+    ).finally(() => setSchedulerLoading(false));
+  }, []);
+  // 캐릭터를 다시 고르면 새로 받는다.
+  useEffect(() => {
+    schedulerRequested.current = false;
+    setScheduler(undefined);
+  }, [selectedKey]);
+
+  const state: MainState = {
+    uid,
+    profile,
+    parties,
+    statuses,
+    todoCount,
+    characters,
+    partyFilter,
+    setPartyFilter,
+    partySort,
+    setPartySort,
+    scheduler,
+    schedulerLoading,
+    schedulerError,
+    loadScheduler,
+  };
   return (
     <MainContext.Provider value={state}>
       <Outlet />

@@ -18,11 +18,25 @@ export interface PartySnapshot {
 /**
  * @param needsAction 내가 해야 할 일이면 true, 다른 사람을 기다리거나 알림용이면 false
  * @param moreActions label 말고도 해야 할 일이 몇 건 더 있는가
+ * @param todos 해야 할 일 전부 (급한 순). 파티 화면의 탭 배지에 쓴다
  */
 export interface PartyStatus {
   label: string;
   needsAction: boolean;
   moreActions: number;
+  todos: string[];
+}
+
+/** 정산 탭에서 하는 일. 나머지 할 일(불가 시간 입력, 투표, 일정 확정, 결과 기록, 변경 요청 처리)은 투표 탭에서 한다. */
+export const SETTLEMENT_TODOS = ["정산금 수령 확인", "정산금 지급"];
+
+/** 파티 화면 하단 탭별로 내가 할 일이 있는가 */
+export function tabTodos(status: PartyStatus | null): { vote: boolean; settlement: boolean } {
+  const todos = status?.todos ?? [];
+  return {
+    vote: todos.some((todo) => !SETTLEMENT_TODOS.includes(todo)),
+    settlement: todos.some((todo) => SETTLEMENT_TODOS.includes(todo)),
+  };
 }
 
 export const statusText = (status: PartyStatus): string =>
@@ -98,8 +112,8 @@ export function partyStatus(uid: string, party: Party, snapshot: PartySnapshot |
   }
 
   return todos.length > 0
-    ? { label: todos[0], needsAction: true, moreActions: todos.length - 1 }
-    : { label: info, needsAction: false, moreActions: 0 };
+    ? { label: todos[0], needsAction: true, moreActions: todos.length - 1, todos }
+    : { label: info, needsAction: false, moreActions: 0, todos };
 }
 
 /** 파티 목록이 일정 문서 말고 더 지켜보는 대상. 이것이 바뀔 때만 하위 구독을 다시 붙인다. */

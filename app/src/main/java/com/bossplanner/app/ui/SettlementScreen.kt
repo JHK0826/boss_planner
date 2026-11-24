@@ -1,7 +1,6 @@
 package com.bossplanner.app.ui
 
 import android.net.Uri
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -65,18 +64,18 @@ import com.google.firebase.storage.StorageException
 import kotlinx.coroutines.launch
 
 /**
- * 클리어한 일정의 분배금 정산과 채팅.
+ * 클리어한 일정의 분배금 정산과 채팅. 파티 화면의 정산 탭 안에 들어간다.
  * 위쪽은 분배금 계산·상태(대기 → 지급함 → 수령 확인), 아래쪽은 수령 방법을 주고받는 채팅이다.
  */
 @Composable
-fun SettlementScreen(
+fun SettlementContent(
     uid: String,
-    partyId: String,
+    party: Party,
     periodId: String,
-    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
     parties: PartyRepository = remember { PartyRepository() },
 ) {
-    val party by remember(partyId) { parties.party(partyId) }.collectAsStateWithLifecycle(null)
+    val partyId = party.id
     val schedule by remember(partyId, periodId) { parties.schedule(partyId, periodId) }.collectAsStateWithLifecycle(null)
     val entries by remember(partyId, periodId) { parties.settlementEntries(partyId, periodId) }
         .collectAsStateWithLifecycle(emptyList())
@@ -88,12 +87,10 @@ fun SettlementScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    BackHandler(enabled = !busy, onBack = onBack)
-
     val currentParty = party
     val currentSchedule = schedule
-    if (currentParty == null || currentSchedule == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+    if (currentSchedule == null) {
+        Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
 
@@ -108,9 +105,7 @@ fun SettlementScreen(
             }
         }, action)
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = onBack, enabled = !busy) { Text("← ${currentParty.name}") }
-        Text("분배금 정산", style = MaterialTheme.typography.headlineSmall)
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         currentSchedule.confirmed?.let {
             Text("${TimeSlots.range(it.startMs, it.endMs)} 레이드", style = MaterialTheme.typography.bodySmall)
         }

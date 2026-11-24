@@ -68,6 +68,8 @@ export interface NexonBossContent {
   difficulty: string;
   /** "bossDaily" | "bossWeekly" | "bossMonthly" */
   cycle: string;
+  /** 게임 스케줄러에 등록했는가 ("true"/"false") */
+  registration_flag?: string;
   complete_flag: string;
 }
 

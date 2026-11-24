@@ -5,33 +5,70 @@ import { PARTY_SORTS, type PartySort, useMain } from "../main-context";
 import { periodColumns, routineKey } from "../lib/grid";
 import { bossLabel, type Party, type PartyMember } from "../lib/model";
 import { statusText } from "../lib/partyStatus";
-import { DAY_MS, SLOT_MS, SLOTS_PER_DAY, dayLabel, range, rowLabel, weekStart } from "../lib/time";
+import { DAY_MS, SLOT_MS, SLOTS_PER_DAY, dateTime, dayLabel, range, rowLabel, weekStart } from "../lib/time";
 import { useNow, useSubscription } from "../lib/useSubscription";
 import { disablePush, enablePush, pushAvailability, type PushAvailability, pushEnabled } from "../lib/push";
+import { BossChips } from "../ui/BossChips";
 import { Loading, useTheme, useToast } from "../ui/common";
 
 // ---------- 내 캐릭터 ----------
 
 export function CharactersTab() {
-  const { characters } = useMain();
+  const { characters, scheduler, schedulerLoading, schedulerError, loadScheduler } = useMain();
   const navigate = useNavigate();
+  // 처음 열 때 게임 스케줄러를 받는다(서버가 10분 동안 저장해 둔다).
+  useEffect(() => loadScheduler(), [loadScheduler]);
+  const fetchedTimes = Object.values(scheduler ?? {}).flatMap((s) => (s.fetchedAtMs ? [s.fetchedAtMs] : []));
+  const fetchedAt = fetchedTimes.length > 0 ? Math.min(...fetchedTimes) : null;
+
   return (
     <div className="page with-tabs">
       <h1>내 캐릭터</h1>
+      <div className="row">
+        <span className="small muted grow">
+          {schedulerLoading ? "스케줄러를 받아 오는 중…" : fetchedAt ? `게임 스케줄러 · ${dateTime(fetchedAt)} 기준` : "게임 스케줄러"}
+        </span>
+        <button className="btn-text" disabled={schedulerLoading} onClick={() => loadScheduler(true)}>
+          새로고침
+        </button>
+      </div>
+      {schedulerError && <p className="small error" style={{ margin: 0 }}>{schedulerError}</p>}
       {characters === undefined && <Loading />}
       {characters?.length === 0 && <p>선택한 캐릭터가 없습니다.</p>}
-      {characters?.map((c) => (
-        <div key={c.id} className="card row">
-          {c.imageUrl ? <img className="avatar" style={{ width: 72, height: 72 }} src={c.imageUrl} alt="" /> : <div className="avatar" />}
-          <div className="grow">
-            <strong>{c.name}</strong>
-            <div>
-              Lv.{c.level} · {c.job}
+      {characters?.map((c) => {
+        const state = scheduler?.[c.id];
+        const weekly = state?.bosses.filter((b) => b.cycle === "WEEKLY").length ?? 0;
+        const monthly = state?.bosses.filter((b) => b.cycle === "MONTHLY").length ?? 0;
+        return (
+          <div key={c.id} className="card stack" data-character={c.id}>
+            <div className="row" style={{ alignItems: "flex-start" }}>
+              {c.imageUrl ? <img className="avatar" style={{ width: 72, height: 72 }} src={c.imageUrl} alt="" /> : <div className="avatar" />}
+              <div className="grow">
+                <strong>{c.name}</strong>
+                <div>
+                  Lv.{c.level} · {c.job}
+                </div>
+                <div className="small muted">{[c.world, c.guild].filter(Boolean).join(" · ")}</div>
+                {state && (
+                  <div className="small muted">
+                    주간 {weekly} · 월간 {monthly}
+                  </div>
+                )}
+              </div>
+              <button className="btn-text" onClick={() => navigate(`/characters/${c.id}/earnings`)}>
+                수익 보기
+              </button>
             </div>
-            <div className="small muted">{[c.world, c.guild].filter(Boolean).join(" · ")}</div>
+            {state?.error && <p className="small error" style={{ margin: 0 }}>{state.error}</p>}
+            {state && state.bosses.length > 0 && <BossChips bosses={state.bosses} />}
+            {state && state.bosses.length === 0 && !state.error && (
+              <p className="small muted" style={{ margin: 0 }}>
+                게임 스케줄러에 등록한 보스가 없습니다.
+              </p>
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
       <button className="btn-outline full" onClick={() => navigate("/characters/select")}>
         캐릭터 다시 선택
       </button>

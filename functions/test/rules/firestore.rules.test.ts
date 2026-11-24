@@ -99,6 +99,19 @@ describe("users", () => {
     await assertSucceeds(setDoc(doc(db(MEMBER), `users/${MEMBER}/devices/d1`), { token: "t" }));
     await assertFails(getDoc(doc(db(LEADER), `users/${MEMBER}/devices/d1`)));
   });
+
+  it("스케줄러 캐시와 수익 기록은 본인만 읽고 아무도 쓸 수 없다", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `users/${MEMBER}/scheduler/c1`), { bosses: [] });
+      await setDoc(doc(ctx.firestore(), `users/${MEMBER}/earnings/W-20261112`), { characters: {} });
+    });
+    for (const path of [`users/${MEMBER}/scheduler/c1`, `users/${MEMBER}/earnings/W-20261112`]) {
+      await assertSucceeds(getDoc(doc(db(MEMBER), path)));
+      await assertFails(getDoc(doc(db(LEADER), path)));
+      await assertFails(setDoc(doc(db(MEMBER), path), { hacked: true }));
+    }
+    await assertSucceeds(getDocs(collection(db(MEMBER), `users/${MEMBER}/earnings`)));
+  });
 });
 
 describe("parties", () => {

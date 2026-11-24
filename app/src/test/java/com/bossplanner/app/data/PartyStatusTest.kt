@@ -64,8 +64,12 @@ class PartyStatusTest {
         settlements = settlements,
     )
 
-    private fun status(uid: String, snapshot: PartySnapshot?, party: Party = party(), at: Long = now) =
+    private fun fullStatus(uid: String, snapshot: PartySnapshot?, party: Party = party(), at: Long = now) =
         PartyStatuses.of(uid, party, snapshot, at)
+
+    /** 표시 문구만 비교한다 (할 일 목록은 tabTodos 테스트에서 본다). */
+    private fun status(uid: String, snapshot: PartySnapshot?, party: Party = party(), at: Long = now) =
+        fullStatus(uid, snapshot, party, at)?.copy(todos = emptyList())
 
     @Test
     fun `아직 못 읽었으면 null`() {
@@ -161,5 +165,22 @@ class PartyStatusTest {
         assertEquals("불가 시간 입력", result.label)
         assertEquals(1, result.moreActions)
         assertEquals("불가 시간 입력 외 1건", result.text)
+    }
+
+    @Test
+    fun `할 일을 파티 화면의 투표 탭과 정산 탭으로 나눈다`() {
+        val settlement = Settlement("a", 100_000_000, 3, 97_000_000, 49_238_500, completed = false)
+        val past = schedule(state = "SETTLED", id = "W-0", settlement = settlement)
+        val pending = mapOf("W-0" to listOf(SettlementEntry("b", 1, "PENDING")))
+        val both = fullStatus("a", snapshot(schedule(id = "W-1"), past, settlements = pending))
+        assertEquals(listOf("불가 시간 입력", "정산금 지급"), both?.todos)
+        assertEquals(TabTodos(schedule = true, settlement = true), TabTodos.of(both))
+
+        assertEquals(TabTodos(schedule = true, settlement = false), TabTodos.of(fullStatus("a", snapshot(schedule()))))
+        val settled = schedule(state = "SETTLED", settlement = settlement)
+        val paid = mapOf(settled.id to listOf(SettlementEntry("b", 1, "PAID")))
+        assertEquals(TabTodos(schedule = false, settlement = true), TabTodos.of(fullStatus("b", snapshot(settled, settlements = paid))))
+        assertEquals(TabTodos(schedule = false, settlement = false), TabTodos.of(fullStatus("a", snapshot())))
+        assertEquals(TabTodos(schedule = false, settlement = false), TabTodos.of(null))
     }
 }

@@ -174,8 +174,12 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 
 .banner { background: var(--primary-container); color: var(--on-primary-container); border-radius: var(--radius); padding: 12px 14px; }
 
-/* 정산 화면: 위는 정산 상태(따로 스크롤), 아래는 채팅이 남은 높이를 다 쓴다 (Android와 같은 배치). */
-.page.settlement-page { height: 100dvh; padding-bottom: calc(8px + var(--safe-bottom)); gap: 8px; }
+/* 하단 탭의 할 일 점 */
+.tabs a .dot { position: absolute; top: 6px; left: calc(50% + 12px); width: 8px; height: 8px; border-radius: 50%; background: var(--error); }
+
+/* 정산 탭: 위는 정산 상태(따로 스크롤), 아래는 채팅이 남은 높이를 다 쓴다 (Android와 같은 배치). */
+.page.fill { height: 100dvh; gap: 8px; padding-bottom: calc(var(--tab-height) + 8px + var(--safe-bottom)); }
+.settlement-content { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .settlement-status { max-height: 42dvh; overflow-y: auto; flex: none; }
 .divider { border: none; border-top: 1px solid var(--surface-variant); margin: 0; width: 100%; }
 .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -188,4 +192,25 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 .chat-item .bubble .text { padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
 .chat-input textarea { resize: none; max-height: 96px; }
 /* 정산 화면에서는 채팅 입력창 위에 띄운다. */
-body:has(.settlement-page) .toast-region { bottom: calc(80px + var(--safe-bottom)); }
+body:has(.settlement-content) .toast-region { bottom: calc(var(--tab-height) + 80px + var(--safe-bottom)); }
+
+/* 내 캐릭터 탭: 게임 스케줄러 보스 칩 */
+.boss-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 8px 6px; }
+.boss-chip { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.boss-tile { position: relative; width: 100%; aspect-ratio: 1; border-radius: 8px; background: var(--surface-variant);
+  display: flex; align-items: center; justify-content: center; padding: 2px; overflow: hidden; }
+.boss-name { font-size: 11px; line-height: 1.15; text-align: center; word-break: keep-all; color: var(--on-surface); }
+.boss-chip.cleared .boss-name { opacity: 0.45; }
+.boss-check { position: absolute; width: 30px; height: 30px; fill: var(--on-surface); filter: drop-shadow(0 0 2px var(--surface)); }
+.boss-cycle { position: absolute; top: 2px; left: 4px; font-size: 10px; font-weight: 700; color: var(--primary); }
+.difficulty { font-size: 11px; font-weight: 700; border-radius: 9px; padding: 1px 0; width: 100%; text-align: center;
+  border: 1px solid transparent; }
+.d-extreme { color: #ffb4ab; border-color: #8c1d18; background: #3b0b0a; }
+.d-chaos { color: var(--on-surface); border-color: var(--outline); }
+.d-hard { color: #fff; background: #c2185b; }
+.d-normal { color: #fff; background: #00838f; }
+.d-easy { color: var(--on-surface-variant); background: var(--surface-variant); }
+
+/* 수익 보기 */
+.amount-big { font-size: 24px; font-weight: 700; }
+.month-row { padding: 8px 0; border-bottom: 1px solid var(--surface-variant); }
