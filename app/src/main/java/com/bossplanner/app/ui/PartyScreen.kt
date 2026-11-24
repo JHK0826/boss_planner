@@ -1,5 +1,7 @@
 package com.bossplanner.app.ui
 
+import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +34,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -88,7 +93,9 @@ fun PartyScreen(
     }.collectAsStateWithLifecycle(emptyMap())
 
     var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val showMessage = LocalShowMessage.current
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     // 파티원 캐릭터 이미지 (uid → 주소)
     var memberImages by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -111,19 +118,9 @@ fun PartyScreen(
         return
     }
 
-    fun run(action: suspend () -> Unit) {
-        busy = true
-        error = null
-        scope.launch {
-            try {
-                action()
-            } catch (e: Exception) {
-                error = e.userMessage()
-            } finally {
-                busy = false
-            }
-        }
-    }
+    /** 서버에 보내고 결과를 화면 아래 알림으로 보여 준다. */
+    fun run(success: String?, action: suspend () -> Unit) =
+        scope.runAction(showMessage, { busy = it }, success, { it.userMessage() }, action)
 
     val isLeader = party.leaderUid == uid
     val inputOpen = schedule?.acceptsInput == true
@@ -149,7 +146,19 @@ fun PartyScreen(
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("초대 코드", style = MaterialTheme.typography.labelMedium)
-                Text(party.inviteCode, style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Monospace)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        party.inviteCode,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(party.inviteCode))
+                        showMessage.show("초대 코드를 복사했습니다")
+                    }) { Text("복사") }
+                    TextButton(onClick = { shareInvite(context, party) }) { Text("공유") }
+                }
                 Text(
                     if (party.scheduleStarted) {
                         "가입·탈퇴·위임은 ${if (party.isWeekly) "목요일" else "매월 1일"}에, 일정이 확정되기 전에만 할 수 있습니다."
@@ -196,9 +205,17 @@ fun PartyScreen(
             uid = uid,
             now = now,
             busy = busy,
-            onVote = { agreed, round -> run { parties.setVote(partyId, schedule!!.id, uid, agreed, round) } },
+            onVote = { agreed, round ->
+                run(if (agreed.isEmpty()) "모두 안 됨으로 투표했습니다" else "투표했습니다") {
+                    parties.setVote(partyId, schedule!!.id, uid, agreed, round)
+                }
+            },
             onAsk = { confirm = it },
-            onRespondToChange = { approve -> run { parties.respondToChange(partyId, schedule!!.id, approve) } },
+            onRespondToChange = { approve ->
+                run(if (approve) "변경 요청을 승인했습니다. 다시 조율합니다" else "변경 요청을 거절했습니다") {
+                    parties.respondToChange(partyId, schedule!!.id, approve)
+                }
+            },
         )
         // 이번 주기 일정이 아직 없으면 파티장이 바로 열 수 있다.
         val noCurrentSchedule = scheduleState != null && (schedule == null || schedule.periodEndMs <= now)
@@ -247,7 +264,6 @@ fun PartyScreen(
             }
         }
 
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         TextButton(onClick = { confirm = Confirm.Leave }, enabled = !busy) { Text("파티 탈퇴") }
     }
@@ -266,7 +282,7 @@ fun PartyScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
-                    run { parties.startSchedule(partyId) }
+                    run("이번 주기 일정을 시작했습니다") { parties.startSchedule(partyId) }
                 }) { Text("시작") }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -291,7 +307,7 @@ fun PartyScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         confirm = null
-                        run { parties.updatePartyPreferences(partyId, draft.preferredWindow, draft.minLeadMinutes) }
+                        run("추천 설정을 저장했습니다") { parties.updatePartyPreferences(partyId, draft.preferredWindow, draft.minLeadMinutes) }
                     }) { Text("저장") }
                 },
                 dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -304,7 +320,7 @@ fun PartyScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
-                    run { parties.confirmSchedule(partyId, schedule!!.id, current.index) }
+                    run("일정을 확정했습니다") { parties.confirmSchedule(partyId, schedule!!.id, current.index) }
                 }) { Text("확정") }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -321,7 +337,9 @@ fun PartyScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
-                    run { parties.recordClear(partyId, schedule!!.id, uid, current.cleared) }
+                    run(if (current.cleared) "클리어로 기록했습니다" else "미클리어로 기록했습니다. 남은 기간에서 다시 조율합니다") {
+                        parties.recordClear(partyId, schedule!!.id, uid, current.cleared)
+                    }
                 }) { Text("기록") }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -345,7 +363,7 @@ fun PartyScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         confirm = null
-                        run { parties.requestChange(partyId, schedule!!.id, reason.trim()) }
+                        run("변경을 요청했습니다. 파티장의 승인을 기다립니다") { parties.requestChange(partyId, schedule!!.id, reason.trim()) }
                     }) { Text("요청") }
                 },
                 dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -363,7 +381,7 @@ fun PartyScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
-                    run { parties.leaveParty(partyId) }
+                    run("${party.name}에서 탈퇴했습니다") { parties.leaveParty(partyId) }
                 }) { Text("탈퇴") }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -375,7 +393,7 @@ fun PartyScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
-                    run { parties.delegateLeader(partyId, current.member.uid) }
+                    run("${current.member.label()}님에게 파티장을 넘겼습니다") { parties.delegateLeader(partyId, current.member.uid) }
                 }) { Text("위임") }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
@@ -656,4 +674,16 @@ private fun CandidateVoting(
             style = MaterialTheme.typography.bodySmall,
         )
     }
+}
+
+/** 카카오톡 등으로 초대 코드를 보낸다. */
+private fun shareInvite(context: Context, party: Party) {
+    val text = buildString {
+        append("[보스 스케줄 매니저] '${party.name}' 파티 초대\n")
+        append("${party.bossLabel}\n")
+        append("초대 코드: ${party.inviteCode}\n")
+        append("앱의 파티 메뉴에서 '코드로 가입'을 누르고 코드를 입력해 주세요.")
+    }
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+    context.startActivity(Intent.createChooser(send, "초대 코드 보내기"))
 }

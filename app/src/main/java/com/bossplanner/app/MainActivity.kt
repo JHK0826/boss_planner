@@ -10,7 +10,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import com.bossplanner.app.ui.LocalShowMessage
+import com.bossplanner.app.ui.ShowMessage
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -42,8 +52,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                        App(openPartyId = openPartyId, onPartyOpened = { openPartyId = null })
+                    // 결과 알림(스낵바)은 앱 전체에 하나만 두고, 화면이 바뀌어도 이어서 보이게 한다.
+                    val snackbar = remember { SnackbarHostState() }
+                    val scope = rememberCoroutineScope()
+                    val showMessage = remember {
+                        ShowMessage { text ->
+                            scope.launch {
+                                snackbar.currentSnackbarData?.dismiss()
+                                snackbar.showSnackbar(text)
+                            }
+                        }
+                    }
+                    CompositionLocalProvider(LocalShowMessage provides showMessage) {
+                        Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+                            App(openPartyId = openPartyId, onPartyOpened = { openPartyId = null })
+                            // 하단 메뉴 바 위에 뜨도록 띄운다.
+                            SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+                        }
                     }
                 }
             }

@@ -1,0 +1,99 @@
+package com.bossplanner.app.data
+
+/** 파티 목록에서 파티 하나의 상태를 정할 때 쓰는 일정 데이터 */
+data class PartySnapshot(
+    /** 최근 일정들 (최신순). 첫 번째가 가장 최근 주기다 */
+    val schedules: List<Schedule>,
+    /** 가장 최근 일정의 불가 시간 (uid → 입력). 입력을 받는 중일 때만 채운다 */
+    val unavailable: Map<String, Unavailable>,
+    /** 가장 최근 일정의 투표 (uid → 투표). 후보가 있을 때만 채운다 */
+    val votes: Map<String, Vote>,
+    /** 정산이 끝나지 않은 일정별 분배금 상태 (periodId → 받을 사람별 상태) */
+    val settlements: Map<String, List<SettlementEntry>>,
+)
+
+/**
+ * 파티 목록에 붙이는 상태.
+ * @param needsAction 내가 해야 할 일이면 true, 다른 사람을 기다리거나 알림용이면 false
+ * @param moreActions label 말고도 해야 할 일이 몇 건 더 있는가
+ */
+data class PartyStatus(val label: String, val needsAction: Boolean, val moreActions: Int = 0) {
+    val text: String get() = if (moreActions > 0) "$label 외 ${moreActions}건" else label
+}
+
+object PartyStatuses {
+    /**
+     * 내가 이 파티에서 지금 해야 할 일. 해야 할 일이 없으면 지금 상황을 알려 주는 문구를 준다.
+     * 해야 할 일이 여러 개면 급한 것(결과 기록 → 변경 요청 처리 → 입력 → 투표 → 확정 → 정산) 하나를 보여 준다.
+     *
+     * @return 일정 데이터를 아직 못 읽었으면 null
+     */
+    fun of(uid: String, party: Party, snapshot: PartySnapshot?, nowMs: Long): PartyStatus? {
+        if (snapshot == null) return null
+        val isLeader = party.leaderUid == uid
+        val members = party.memberUids.size
+        val todos = mutableListOf<String>()
+        var info = ""
+
+        // 끝난 주기의 일정은 "이번 주기"로 보지 않는다.
+        val current = snapshot.schedules.firstOrNull()?.takeIf { it.periodEndMs > nowMs }
+        if (current == null) {
+            info = if (party.scheduleStarted) "다음 주기 대기" else "일정 시작 전"
+        } else {
+            when (current.state) {
+                "OPEN", "RETRY" -> {
+                    val submitted = party.memberUids.count { snapshot.unavailable[it]?.submitted == true }
+                    val voted = party.memberUids.count { snapshot.votes[it]?.round == current.round }
+                    when {
+                        snapshot.unavailable[uid]?.submitted != true -> todos += "불가 시간 입력"
+                        current.candidates.isEmpty() -> info = "다른 파티원 입력 대기 ($submitted/$members)"
+                        snapshot.votes[uid]?.round != current.round -> todos += "투표"
+                        current.unanimous.isNotEmpty() && isLeader -> todos += "일정 확정"
+                        current.unanimous.isNotEmpty() -> info = "파티장 확정 대기"
+                        else -> info = "다른 파티원 투표 대기 ($voted/$members)"
+                    }
+                    if (current.state == "RETRY" && info.isNotEmpty()) info = "재조정 · $info"
+                }
+                "LOCKED" -> {
+                    val confirmed = current.confirmed
+                    when {
+                        confirmed != null && nowMs >= confirmed.startMs -> todos += "결과 기록"
+                        isLeader && current.changeRequest?.isPending == true -> todos += "변경 요청 처리"
+                        confirmed != null -> info = "확정 ${TimeSlots.dateTime(confirmed.startMs)}"
+                        else -> info = "확정"
+                    }
+                }
+                "VERIFYING" -> todos += "결과 기록"
+                "SETTLED" -> {
+                    val settlement = current.settlement
+                    val mine = snapshot.settlements[current.id]?.firstOrNull { it.uid == uid }
+                    info = when {
+                        settlement == null -> "클리어 · 분배금 미등록"
+                        settlement.completed -> "정산 완료"
+                        mine?.status == "PENDING" -> "정산금 지급 대기"
+                        else -> "정산 진행 중"
+                    }
+                }
+                "SKIPPED" -> info = "이번 주기 미사용"
+                "EXPIRED" -> info = "이번 주기 종료"
+                else -> info = ""
+            }
+        }
+
+        // 정산은 지난 주기 것도 함께 본다.
+        val settlementTodos = mutableListOf<String>()
+        for (schedule in snapshot.schedules) {
+            val entries = snapshot.settlements[schedule.id] ?: continue
+            if (schedule.settlement?.completed == true) continue
+            if (entries.any { it.uid == uid && it.status == "PAID" }) settlementTodos += "정산금 수령 확인"
+            if (schedule.settlement?.sellerUid == uid && entries.any { it.status == "PENDING" }) settlementTodos += "정산금 지급"
+        }
+        todos += settlementTodos
+
+        return if (todos.isNotEmpty()) {
+            PartyStatus(todos.first(), needsAction = true, moreActions = todos.size - 1)
+        } else {
+            PartyStatus(info, needsAction = false)
+        }
+    }
+}

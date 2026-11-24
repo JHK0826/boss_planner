@@ -13,6 +13,11 @@ import com.google.firebase.storage.StorageMetadata
 import java.util.UUID
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
@@ -57,6 +62,33 @@ class PartyRepository(
             .get()
             .await()
             .documents.firstOrNull()?.let(::toSchedule)
+
+    /**
+     * 파티 목록의 상태 표시에 필요한 일정 데이터를 실시간으로 모은다.
+     * 최근 일정들과, 입력·투표 중이면 그 일정의 불가 시간과 투표, 정산 중인 일정의 분배금 상태를 읽는다.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun partySnapshot(partyId: String): Flow<PartySnapshot> =
+        recentSchedules(partyId).flatMapLatest { schedules ->
+            val current = schedules.firstOrNull()
+            val unavailableFlow =
+                if (current?.acceptsInput == true) unavailable(partyId, current.id) else flowOf(emptyMap())
+            val votesFlow =
+                if (current?.acceptsInput == true && current.candidates.isNotEmpty()) votes(partyId, current.id)
+                else flowOf(emptyMap())
+            val open = schedules.filter { it.settlementOpen && it.settlement != null }
+            val settlementFlow: Flow<Map<String, List<SettlementEntry>>> =
+                if (open.isEmpty()) {
+                    flowOf(emptyMap())
+                } else {
+                    combine(open.map { schedule -> settlementEntries(partyId, schedule.id).map { schedule.id to it } }) {
+                        it.toMap()
+                    }
+                }
+            combine(unavailableFlow, votesFlow, settlementFlow) { unavailable, votes, settlements ->
+                PartySnapshot(schedules, unavailable, votes, settlements)
+            }
+        }
 
     fun schedule(partyId: String, periodId: String): Flow<Schedule?> = callbackFlow {
         val registration = scheduleRef(partyId, periodId).addSnapshotListener { snapshot, error ->

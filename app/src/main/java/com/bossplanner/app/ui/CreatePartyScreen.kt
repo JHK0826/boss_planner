@@ -68,6 +68,7 @@ fun CreatePartyScreen(
     var settings by remember { mutableStateOf(RecommendSettings()) }
     var characterId by rememberSaveable { mutableStateOf(characters.firstOrNull()?.id) }
     var busy by remember { mutableStateOf(false) }
+    val showMessage = LocalShowMessage.current
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
@@ -217,16 +218,16 @@ fun CreatePartyScreen(
                 error = null
                 scope.launch {
                     try {
-                        onCreated(
-                            parties.createParty(
-                                name.trim(),
-                                bosses,
-                                durationMinutes,
-                                character,
-                                settings.preferredWindow,
-                                settings.minLeadMinutes,
-                            ),
+                        val created = parties.createParty(
+                            name.trim(),
+                            bosses,
+                            durationMinutes,
+                            character,
+                            settings.preferredWindow,
+                            settings.minLeadMinutes,
                         )
+                        showMessage.show("파티를 만들었습니다. 초대 코드를 파티원에게 보내 주세요")
+                        onCreated(created)
                     } catch (e: Exception) {
                         error = e.userMessage()
                     } finally {

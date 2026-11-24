@@ -21,6 +21,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import com.bossplanner.app.data.PartyStatus
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,6 +86,7 @@ fun CharactersTab(characters: List<CharacterInfo>, onEditCharacters: () -> Unit)
 
 /** 파티 목록 정렬 */
 enum class PartySort(val label: String) {
+    Todo("할 일 먼저"),
     Character("캐릭터순"),
     Name("파티 이름순"),
     Recent("최근 가입순"),
@@ -98,6 +102,8 @@ enum class PartySort(val label: String) {
 fun PartiesTab(
     uid: String,
     parties: List<Party>,
+    /** 파티별 상태 (내가 할 일). 아직 못 읽은 파티는 null */
+    statuses: Map<String, PartyStatus?>,
     characterFilter: String?,
     onCharacterFilterChange: (String?) -> Unit,
     sort: PartySort,
@@ -121,12 +127,14 @@ fun PartiesTab(
     val shown = parties
         .filter { activeFilter == null || mine(it)?.characterId == activeFilter }
         .let { list ->
+            val byCharacter = compareByDescending<Party> { mine(it)?.level ?: 0 }
+                .thenBy { mine(it)?.characterName.orEmpty() }
+                .thenBy { it.name }
             when (sort) {
-                PartySort.Character -> list.sortedWith(
-                    compareByDescending<Party> { mine(it)?.level ?: 0 }
-                        .thenBy { mine(it)?.characterName.orEmpty() }
-                        .thenBy { it.name },
+                PartySort.Todo -> list.sortedWith(
+                    compareByDescending<Party> { statuses[it.id]?.needsAction == true }.then(byCharacter),
                 )
+                PartySort.Character -> list.sortedWith(byCharacter)
                 PartySort.Name -> list.sortedBy { it.name }
                 PartySort.Recent -> list.sortedByDescending { mine(it)?.joinedAtMs ?: 0 }
             }
@@ -137,6 +145,16 @@ fun PartiesTab(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { TabTitle("파티") }
+        val todoCount = statuses.values.count { it?.needsAction == true }
+        if (todoCount > 0) {
+            item {
+                Text(
+                    "할 일이 있는 파티 ${todoCount}개",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onCreateParty, modifier = Modifier.weight(1f)) { Text("파티 만들기") }
@@ -171,7 +189,8 @@ fun PartiesTab(
         items(shown, key = { it.id }) { party ->
             val me = mine(party)
             Card(modifier = Modifier.fillMaxWidth().clickable { onOpenParty(party.id) }) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    statuses[party.id]?.takeIf { it.text.isNotEmpty() }?.let { StatusBadge(it) }
                     Text(party.name, style = MaterialTheme.typography.titleMedium)
                     Text(party.bossLabel, style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -355,6 +374,23 @@ private fun Legend(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(Modifier.size(12.dp).background(color))
         Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/** 파티 카드 맨 위의 상태 표시. 내가 할 일이면 강조색, 기다리는 중이면 흐린 색 */
+@Composable
+private fun StatusBadge(status: PartyStatus) {
+    val action = status.needsAction
+    Surface(
+        color = if (action) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            if (action) "할 일 · ${status.text}" else status.text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (action) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
     }
 }
 

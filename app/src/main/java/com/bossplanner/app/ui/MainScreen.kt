@@ -15,7 +15,15 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.produceState
+import com.bossplanner.app.data.PartyStatuses
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
@@ -74,10 +82,29 @@ fun MainScreen(
     var tab by rememberSaveable { mutableStateOf(Tab.Parties) }
     // 파티 목록의 캐릭터 선택과 정렬. 다른 메뉴나 파티 화면에 다녀와도 유지한다.
     var partyFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    var partySort by rememberSaveable { mutableStateOf(PartySort.Character) }
+    var partySort by rememberSaveable { mutableStateOf(PartySort.Todo) }
     var screen by remember { mutableStateOf<Screen?>(null) }
     var characters by remember { mutableStateOf<List<CharacterInfo>>(emptyList()) }
     val parties by remember(uid) { partyRepository.myParties(uid) }.collectAsStateWithLifecycle(emptyList())
+
+    // 파티마다 내가 할 일. 일정 데이터는 파티 목록(구성)이 바뀔 때만 다시 구독한다.
+    val partyIds = parties.map { it.id }
+    val snapshots by remember(partyIds) {
+        if (partyIds.isEmpty()) {
+            flowOf(emptyMap())
+        } else {
+            combine(partyIds.map { id -> partyRepository.partySnapshot(id).map { id to it } }) { it.toMap() }
+        }
+    }.collectAsStateWithLifecycle(emptyMap())
+    // 레이드 시작처럼 시간이 지나서 바뀌는 할 일이 있어 1분마다 다시 계산한다.
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(60_000)
+            value = System.currentTimeMillis()
+        }
+    }
+    val statuses = parties.associate { it.id to PartyStatuses.of(uid, it, snapshots[it.id], now) }
+    val todoCount = statuses.values.count { it?.needsAction == true }
 
     // 알림 권한을 묻고(Android 13 이상) 이 기기를 알림 대상으로 등록한다.
     val context = LocalContext.current
@@ -116,6 +143,7 @@ fun MainScreen(
                     Tab.Parties -> PartiesTab(
                         uid = uid,
                         parties = parties,
+                        statuses = statuses,
                         characterFilter = partyFilter,
                         onCharacterFilterChange = { partyFilter = it },
                         sort = partySort,
@@ -139,7 +167,14 @@ fun MainScreen(
                     NavigationBarItem(
                         selected = item == tab,
                         onClick = { tab = item },
-                        icon = { Icon(item.icon, contentDescription = null) },
+                        icon = {
+                            // 파티 메뉴에는 할 일이 있는 파티 수를 붙인다.
+                            if (item == Tab.Parties && todoCount > 0) {
+                                BadgedBox(badge = { Badge { Text("$todoCount") } }) { Icon(item.icon, contentDescription = null) }
+                            } else {
+                                Icon(item.icon, contentDescription = null)
+                            }
+                        },
                         label = { Text(item.label) },
                     )
                 }
