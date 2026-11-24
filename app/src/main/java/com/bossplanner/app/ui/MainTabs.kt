@@ -18,9 +18,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import com.bossplanner.app.data.PartyStatus
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +47,7 @@ import com.bossplanner.app.data.CharacterInfo
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
+import com.bossplanner.app.data.Raid
 import com.bossplanner.app.data.RoutineRepository
 import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.UserProfile
@@ -52,16 +56,17 @@ private val TAB_PADDING = 24.dp
 
 /** 내 캐릭터: 보스에 참여하도록 골라 둔 캐릭터를 본다. */
 @Composable
-fun CharactersTab(characters: List<CharacterInfo>, onEditCharacters: () -> Unit) {
+fun CharactersTab(characters: List<CharacterInfo>?, onEditCharacters: () -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = TAB_PADDING),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { TabTitle("내 캐릭터") }
-        if (characters.isEmpty()) {
-            item { Text("선택한 캐릭터가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+        when {
+            characters == null -> item { Loading() }
+            characters.isEmpty() -> item { Text("선택한 캐릭터가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
         }
-        items(characters, key = { it.id }) { character ->
+        items(characters.orEmpty(), key = { it.id }) { character ->
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(model = character.imageUrl, contentDescription = null, modifier = Modifier.size(72.dp))
@@ -101,7 +106,8 @@ enum class PartySort(val label: String) {
 @Composable
 fun PartiesTab(
     uid: String,
-    parties: List<Party>,
+    /** 내 파티 목록. 아직 받아 오는 중이면 null */
+    loadedParties: List<Party>?,
     /** 파티별 상태 (내가 할 일). 아직 못 읽은 파티는 null */
     statuses: Map<String, PartyStatus?>,
     characterFilter: String?,
@@ -112,6 +118,7 @@ fun PartiesTab(
     onCreateParty: () -> Unit,
     onJoinParty: () -> Unit,
 ) {
+    val parties = loadedParties.orEmpty()
     // 내 파티에 들어가 있는 내 캐릭터들 (레벨 높은 순)과 캐릭터별 파티 수
     val myCharacters = parties.mapNotNull { it.members[uid] }
         .distinctBy { it.characterId }
@@ -161,7 +168,9 @@ fun PartiesTab(
                 OutlinedButton(onClick = onJoinParty, modifier = Modifier.weight(1f)) { Text("코드로 가입") }
             }
         }
-        if (parties.isEmpty()) {
+        if (loadedParties == null) {
+            item { Loading() }
+        } else if (parties.isEmpty()) {
             item { Text("아직 가입한 파티가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
         } else {
             item {
@@ -224,6 +233,24 @@ fun SettingsTab(profile: UserProfile, onEditApiKey: () -> Unit, onSignOut: () ->
             Text("닉네임", style = MaterialTheme.typography.labelMedium)
             Text(profile.displayName, style = MaterialTheme.typography.titleMedium)
         }
+        val theme = LocalThemeSetting.current
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { theme.onChange(!theme.dark) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("다크 모드", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (theme.followsSystem) "휴대폰 설정을 따르는 중" else "앱에서 직접 설정함",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = theme.dark, onCheckedChange = null)
+        }
+        if (!theme.followsSystem) {
+            TextButton(onClick = { theme.onChange(null) }) { Text("휴대폰 설정 따르기") }
+        }
         OutlinedButton(onClick = onEditApiKey, modifier = Modifier.fillMaxWidth()) { Text("API Key 다시 등록") }
         OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("로그아웃") }
         // 파티원끼리 같은 버전을 쓰는지 확인할 수 있게 보여 준다.
@@ -251,7 +278,10 @@ fun TimetableTab(
     val now = remember { System.currentTimeMillis() }
     val weekStart = remember { TimeSlots.weekStart(now) }
     val weekEnd = weekStart + 7 * DAY_MS
-    val raids by remember(uid, weekStart) { parties.myRaids(uid, weekStart) }.collectAsStateWithLifecycle(emptyList())
+    // null = 아직 받아 오는 중
+    val loadedRaids by remember(uid, weekStart) { parties.myRaids(uid, weekStart) }
+        .collectAsStateWithLifecycle<List<Raid>?>(null)
+    val raids = loadedRaids.orEmpty()
     var routine by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     LaunchedEffect(uid) {
@@ -290,7 +320,9 @@ fun TimetableTab(
                     modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                 )
             }
-            if (raids.isEmpty()) {
+            if (loadedRaids == null) {
+                item { Loading() }
+            } else if (raids.isEmpty()) {
                 item { Text("이번 주 이후로 확정된 일정이 없습니다.", style = MaterialTheme.typography.bodyMedium) }
             }
             items(raids, key = { "${it.partyId}-${it.startMs}" }) { raid ->
@@ -370,7 +402,7 @@ fun TimetableTab(
 }
 
 @Composable
-private fun Legend(color: Color, label: String) {
+internal fun Legend(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(Modifier.size(12.dp).background(color))
         Text(label, style = MaterialTheme.typography.labelSmall)
@@ -391,6 +423,14 @@ private fun StatusBadge(status: PartyStatus) {
             color = if (action) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
         )
+    }
+}
+
+/** 목록을 받아 오는 동안 보여 주는 표시 */
+@Composable
+private fun Loading() {
+    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator()
     }
 }
 

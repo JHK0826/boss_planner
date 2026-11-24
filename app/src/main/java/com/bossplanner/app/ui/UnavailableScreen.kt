@@ -60,17 +60,8 @@ fun UnavailableScreen(
     parties: PartyRepository = remember { PartyRepository() },
     routines: RoutineRepository = remember { RoutineRepository() },
 ) {
-    val dayCount = ((target.periodEndMs - target.periodStartMs) / (TimeSlots.SLOT_MS * TimeSlots.SLOTS_PER_DAY)).toInt()
-    val columns = remember(target.periodStartMs, dayCount) {
-        List(dayCount) { day ->
-            val dayStart = target.periodStartMs + day * TimeSlots.SLOTS_PER_DAY * TimeSlots.SLOT_MS
-            GridColumn(
-                title = TimeSlots.weekdayLabel(dayStart),
-                subtitle = TimeSlots.dayLabel(dayStart),
-                weekday = TimeSlots.weekday(dayStart),
-                slotIds = List(TimeSlots.SLOTS_PER_DAY) { row -> TimeSlots.slotId(dayStart + row * TimeSlots.SLOT_MS) },
-            )
-        }
+    val columns = remember(target.periodStartMs, target.periodEndMs) {
+        periodColumns(target.periodStartMs, target.periodEndMs)
     }
     val now = remember { System.currentTimeMillis() }
     val firstFutureSlot = ((now - target.periodStartMs) / TimeSlots.SLOT_MS).toInt() + 1

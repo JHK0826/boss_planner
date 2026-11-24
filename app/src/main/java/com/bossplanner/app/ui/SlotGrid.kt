@@ -238,6 +238,25 @@ private fun SlotCell(width: Dp, blocked: Boolean, past: Boolean, enabled: Boolea
     )
 }
 
+/**
+ * 주기의 날짜별 열 (주간 7일, 월간 28~31일). 불가 시간 입력과 파티원 시간표 보기에 같이 쓴다.
+ * @param startMs 주기 시작 (그날 00:00 KST)
+ * @param endMs 주기 끝 (다음 주기 시작)
+ */
+fun periodColumns(startMs: Long, endMs: Long): List<GridColumn> {
+    val dayMs = TimeSlots.SLOTS_PER_DAY * TimeSlots.SLOT_MS
+    val dayCount = ((endMs - startMs) / dayMs).toInt()
+    return List(dayCount) { day ->
+        val dayStart = startMs + day * dayMs
+        GridColumn(
+            title = TimeSlots.weekdayLabel(dayStart),
+            subtitle = TimeSlots.dayLabel(dayStart),
+            weekday = TimeSlots.weekday(dayStart),
+            slotIds = List(TimeSlots.SLOTS_PER_DAY) { row -> TimeSlots.slotId(dayStart + row * TimeSlots.SLOT_MS) },
+        )
+    }
+}
+
 /** 요일 7개(월~일)짜리 열. 고정 불가 시간 편집에 쓴다. */
 fun weekdayColumns(slotIdFor: (weekday: Int, row: Int) -> String): List<GridColumn> =
     (1..7).map { weekday ->

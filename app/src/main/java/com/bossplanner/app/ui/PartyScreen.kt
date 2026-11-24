@@ -39,6 +39,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.material3.Surface
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
@@ -97,6 +100,8 @@ fun PartyScreen(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var confirm by remember { mutableStateOf<Confirm?>(null) }
+    // 시간표를 보고 있는 파티원
+    var viewingMember by remember { mutableStateOf<PartyMember?>(null) }
     // 파티원 캐릭터 이미지 (uid → 주소)
     var memberImages by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val memberCharacters = partyState?.value?.members?.values?.map { it.uid to it.characterId }
@@ -188,6 +193,7 @@ fun PartyScreen(
                 isLeader = memberUid == party.leaderUid,
                 isMe = memberUid == uid,
                 status = memberStatus(schedule, unavailable[memberUid], votes[memberUid]),
+                onClick = { viewingMember = member },
                 onDelegate = if (isLeader && memberUid != uid && !busy) ({ confirm = Confirm.Delegate(member) }) else null,
             )
         }
@@ -266,6 +272,17 @@ fun PartyScreen(
 
 
         TextButton(onClick = { confirm = Confirm.Leave }, enabled = !busy) { Text("파티 탈퇴") }
+    }
+
+    viewingMember?.let { member ->
+        MemberTimetableDialog(
+            member = member,
+            // 끝난 주기의 일정은 "이번 주기"로 보지 않는다.
+            schedule = schedule?.takeIf { it.periodEndMs > now },
+            entry = unavailable[member.uid],
+            now = now,
+            onDismiss = { viewingMember = null },
+        )
     }
 
     when (val current = confirm) {
@@ -419,9 +436,11 @@ private fun MemberRow(
     isLeader: Boolean,
     isMe: Boolean,
     status: String?,
+    onClick: () -> Unit,
     onDelegate: (() -> Unit)?,
 ) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    // 누르면 그 파티원의 이번 주기 불가 시간을 본다.
+    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
         // 이미지가 없어도 자리를 비워 두어 줄이 가지런하게 한다.
         AsyncImage(model = imageUrl, contentDescription = null, modifier = Modifier.size(56.dp))
         Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
@@ -609,10 +628,21 @@ private fun CandidateVoting(
     val currentVotes = votes.values.filter { it.round == schedule.round }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            "가능한 시간에 모두 동의해 주세요. 전원이 동의한 시간 중에서 파티장이 확정합니다.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "가능한 시간에 모두 동의해 주세요. 전원이 동의한 시간 중에서 파티장이 확정합니다.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            // 한 번에 전부 고르거나 비운다. 투표는 아래 버튼으로 보낸다(골라 놓고 몇 개만 뺄 수 있게).
+            val allSelected = schedule.candidates.indices.all { it in selected }
+            TextButton(
+                enabled = !busy,
+                onClick = { selected = if (allSelected) emptySet() else schedule.candidates.indices.toSet() },
+            ) {
+                Text(if (allSelected) "모두 해제" else "모두 가능")
+            }
+        }
         schedule.candidates.forEachIndexed { index, candidate ->
             val checked = index in selected
             val unanimous = index in schedule.unanimous
@@ -686,4 +716,63 @@ private fun shareInvite(context: Context, party: Party) {
     }
     val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
     context.startActivity(Intent.createChooser(send, "초대 코드 보내기"))
+}
+
+/**
+ * 파티원 한 명이 이 파티 이번 주기에 제출한 불가 시간을 보여 준다 (보기 전용).
+ * 데이터는 파티 화면이 이미 받고 있는 이번 주기 불가 시간을 그대로 쓴다.
+ */
+@Composable
+private fun MemberTimetableDialog(
+    member: PartyMember,
+    schedule: Schedule?,
+    entry: Unavailable?,
+    now: Long,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${member.label()}님의 불가 시간", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    "${member.characterName} · Lv.${member.level} ${member.job}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (schedule == null) {
+                    Text(
+                        "이번 주기 일정이 아직 시작되지 않아 볼 시간표가 없습니다.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    Text(
+                        "${TimeSlots.dayLabel(schedule.periodStartMs)} ~ ${TimeSlots.dayLabel(schedule.periodEndMs - 1)} · " +
+                            when {
+                                entry == null -> "아직 입력하지 않았습니다"
+                                entry.submitted -> "제출함"
+                                else -> "제출 전 (마지막으로 저장된 시간)"
+                            },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Legend(MaterialTheme.colorScheme.error, "불가")
+                        Legend(MaterialTheme.colorScheme.surfaceVariant, "가능")
+                    }
+                    val columns = remember(schedule.periodStartMs, schedule.periodEndMs) {
+                        periodColumns(schedule.periodStartMs, schedule.periodEndMs)
+                    }
+                    SlotGrid(
+                        columns = columns,
+                        selected = entry?.slots?.toSet().orEmpty(),
+                        enabled = false,
+                        onChange = {},
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        // 지난 시간은 흐리게
+                        pastBefore = ((now - schedule.periodStartMs) / TimeSlots.SLOT_MS).toInt() + 1,
+                    )
+                }
+                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("닫기") }
+            }
+        }
+    }
 }

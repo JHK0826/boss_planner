@@ -44,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bossplanner.app.data.CharacterInfo
+import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyRepository
 import com.bossplanner.app.data.UserProfile
 import com.bossplanner.app.data.UserRepository
@@ -87,8 +88,11 @@ fun MainScreen(
     var partyFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var partySort by rememberSaveable { mutableStateOf(PartySort.Todo) }
     var screen by remember { mutableStateOf<Screen?>(null) }
-    var characters by remember { mutableStateOf<List<CharacterInfo>>(emptyList()) }
-    val parties by remember(uid) { partyRepository.myParties(uid) }.collectAsStateWithLifecycle(emptyList())
+    // null = 아직 받아 오는 중. 빈 목록과 구분해서 로딩 표시를 보여 준다.
+    var characters by remember { mutableStateOf<List<CharacterInfo>?>(null) }
+    val loadedParties by remember(uid) { partyRepository.myParties(uid) }
+        .collectAsStateWithLifecycle<List<Party>?>(null)
+    val parties = loadedParties.orEmpty()
 
     // 파티마다 내가 할 일.
     // 일정 데이터는 파티 탭을 보고 있고 앱이 화면에 떠 있을 때만 지켜본다. 다른 화면에 있는 동안은
@@ -152,7 +156,8 @@ fun MainScreen(
                     Tab.Characters -> CharactersTab(characters = characters, onEditCharacters = onEditCharacters)
                     Tab.Parties -> PartiesTab(
                         uid = uid,
-                        parties = parties,
+                        // 목록을 받기 전에는 null을 넘겨 로딩 표시를 보여 준다.
+                        loadedParties = loadedParties,
                         statuses = statuses,
                         characterFilter = partyFilter,
                         onCharacterFilterChange = { partyFilter = it },
@@ -192,14 +197,14 @@ fun MainScreen(
         }
         Screen.CreateParty -> CreatePartyScreen(
             uid = uid,
-            characters = characters,
+            characters = characters.orEmpty(),
             myParties = parties,
             onCreated = { screen = Screen.PartyDetail(it) },
             onBack = { screen = null },
             parties = partyRepository,
         )
         Screen.JoinParty -> JoinPartyScreen(
-            characters = characters,
+            characters = characters.orEmpty(),
             onJoined = { screen = Screen.PartyDetail(it) },
             onBack = { screen = null },
             parties = partyRepository,
