@@ -142,7 +142,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    App["Android 앱<br/>(Kotlin)"]
+    App["Android 앱 (Kotlin)<br/>웹앱 (아이폰·PC)"]
     subgraph Firebase
         Auth["Authentication"]
         Fn["Cloud Functions"]
@@ -162,7 +162,7 @@ flowchart LR
 
 | 영역 | 담당 |
 | --- | --- |
-| **클라이언트** (Android 앱) | 로그인·API Key 입력, 파티 만들기·가입, 불가 시간 체크·투표, 일정 변경 요청·승인, 이번 주 시간표, 클리어 기록, 정산·채팅 |
+| **클라이언트** (Android 앱, 웹앱) | 로그인·API Key 입력, 파티 만들기·가입, 불가 시간 체크·투표, 일정 변경 요청·승인, 이번 주 시간표, 클리어 기록, 정산·채팅 |
 | **서버** (Cloud Functions, 서버리스) | NEXON API 호출 대행, 파티 구성 검사, 추천 시간 계산, 일정 확정, 변경 요청 마감 검사, 05시 클리어 확인, 정산 상태 관리, 알림 발송 |
 | **데이터** (Cloud Firestore) | 계정·캐릭터·파티, 불가 시간·투표·확정 일정, 클리어 기록, 분배금·정산 채팅, API 응답 캐시 |
 | **외부 API** (NEXON Open API) | 캐릭터 목록·ocid, 캐릭터 기본 정보, 보스 클리어 여부 |
@@ -174,13 +174,14 @@ NEXON API는 Cloud Functions에서만 호출하며, API Key와 캐릭터 식별�
 | 영역 | 기술 | 쓰임 |
 | --- | --- | --- |
 | 앱 | Kotlin, Jetpack Compose, Android Studio | 화면과 입력 |
+| 웹앱 | React, TypeScript, Vite, PWA | 아이폰·PC용. Android 앱과 같은 서버·데이터 |
 | 인증 | Firebase Authentication | 이메일 회원가입·로그인 |
 | DB | Cloud Firestore | 실시간 동기화, 트랜잭션, 보안 규칙 |
 | 서버 | Cloud Functions (TypeScript, Node.js 22) | callable 함수, 예약 실행, Firestore 트리거 |
 | 파일 | Cloud Storage for Firebase | 정산 채팅 첨부 이미지 |
 | 알림 | Firebase Cloud Messaging | 시작·미입력·확정·변경·정산 알림 |
 | 외부 API | NEXON Open API | 캐릭터 정보, 보스 클리어 여부 |
-| 배포 | GitHub 릴리스의 서명한 APK | 스토어 등록 없이 파티원에게 배포 |
+| 배포 | GitHub 릴리스의 서명한 APK, Firebase Hosting | 스토어 등록 없이 파티원에게 배포 (웹앱은 주소로 접속) |
 | 릴리스 | GitHub Actions | 버전이 바뀌면 태그·릴리스 생성, APK 빌드·첨부 |
 
 ## NEXON Open API 사용
@@ -368,6 +369,8 @@ NEXON API는 Cloud Functions에서만 호출하며, API Key와 캐릭터 식별�
 
 알림을 누르면 해당 파티 화면이 열립니다. 로그아웃하면 그 기기의 토큰을 지워 알림이 가지 않습니다.
 
+웹앱은 설정 탭에서 "알림"을 켜야 받습니다. 아이폰은 iOS 16.4 이상에서, Safari로 연 페이지가 아니라 홈 화면에 추가한 앱으로 열었을 때만 켤 수 있습니다.
+
 ## 데이터 구조
 
 ```text
@@ -491,6 +494,14 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 
 새 버전이 나오면 같은 페이지에서 새 APK를 받아 그대로 설치하면 기존 앱 위에 덮어 설치됩니다.
 
+**아이폰·PC**는 웹앱을 씁니다. 같은 계정·파티를 그대로 쓰므로 Android 파티원과 함께 쓸 수 있습니다.
+
+1. Safari(PC는 아무 브라우저)에서 `https://<프로젝트 ID>.web.app`을 엽니다.
+2. 아이폰은 공유 버튼 → "홈 화면에 추가"로 설치하고, 홈 화면의 아이콘으로 엽니다.
+3. 가입부터는 위의 2~5번과 같습니다. 알림을 받으려면 설정 탭에서 "알림"을 켭니다(아이폰은 iOS 16.4 이상).
+
+웹앱은 새 버전을 배포하면 다음에 열 때 자동으로 바뀝니다.
+
 ### 서버와 앱 직접 준비 (개발)
 
 **요구 사항**
@@ -530,6 +541,29 @@ inviteCodes/{code}               초대 코드 → 파티 ID  ← 앱 접근 차
 
 `app/build/outputs/apk/debug/boss-planner-<버전>-debug.apk`가 만들어집니다. 개발 중 시험용입니다. 디버그 키로 서명되어 릴리스 APK와 서명이 다르므로 서로 덮어 설치되지 않습니다. 파티원에게 배포할 APK는 [버전 관리](#버전-관리)의 절차로 만든 릴리스 APK를 쓰세요.
 
+### 웹앱 (아이폰·PC용)
+
+Android 앱과 같은 서버·데이터를 쓰는 웹앱이 `web/`에 있습니다(React + TypeScript + Vite, PWA). 기능은 Android 앱과 같습니다. 서버의 순수 계산 코드(`functions/src/domain/time.ts`, `functions/src/settlement/calc.ts`)는 복사하지 않고 그대로 가져다 씁니다.
+
+**처음 한 번**
+
+1. Firebase 콘솔 → 프로젝트 설정 → 앱 추가 → 웹. 나온 설정값을 `web/.env.example`을 참고해 `web/.env.local`에 넣습니다(커밋하지 않음).
+2. Firebase 콘솔 → 프로젝트 설정 → Cloud Messaging → 웹 푸시 인증서에서 키 쌍을 만들고, 키 값을 `web/.env.local`의 `VITE_FIREBASE_VAPID_KEY`에 넣습니다. 비워 두면 웹앱에서 알림을 켤 수 없습니다.
+3. Firebase 콘솔에서 Hosting을 시작합니다. 주소는 `https://<프로젝트 ID>.web.app`입니다. 서버는 알림을 누르면 이 주소의 파티 화면이 열리도록 링크를 붙입니다.
+
+**개발·테스트·배포**
+
+```bash
+cd web
+npm install
+npm run dev        # 개발 서버
+npm test           # 단위 테스트
+npm run e2e        # Firebase 에뮬레이터에 붙여 브라우저(Chromium)로 실제 흐름을 돌리는 테스트 (Java 필요)
+npx --prefix ../functions firebase deploy --project <프로젝트 ID> --only hosting
+```
+
+배포하면 `firebase.json`의 설정대로 `web/.env.local`의 값으로 웹앱을 빌드해서 올립니다. E2E 테스트는 가입부터 일정 조율, 정산·채팅까지 돌리고 아이폰 크기 화면 캡처를 `web/e2e/screenshots/`에 남깁니다.
+
 ### 폴더 구조
 
 ```text
@@ -546,6 +580,12 @@ functions/              Cloud Functions (TypeScript)
   test/unit/            단위 테스트
   test/rules/           Firestore·Storage 보안 규칙 테스트 (에뮬레이터)
   test/emulator/        파티·일정·정산·알림 통합 테스트 (에뮬레이터)
+web/                    웹앱 (아이폰·PC용 PWA, React + TypeScript + Vite)
+  src/lib/              화면과 무관한 로직 (할 일 계산, 시간표 열, 구독 조합, 문서 파싱)
+  src/data/             Firebase 읽기·쓰기 (Android 앱과 같은 문서·callable)
+  src/screens/          화면
+  test/                 단위 테스트
+  e2e/                  에뮬레이터 + 브라우저 E2E 테스트
 firebase.json           Firebase 배포·에뮬레이터 설정
 firestore.rules         Firestore 보안 규칙
 firestore.indexes.json  Firestore 인덱스
@@ -564,7 +604,7 @@ npm test               # 단위 테스트
 npm run test:emulator  # 보안 규칙·통합 테스트 (Firestore·Storage 에뮬레이터, Java 필요)
 ```
 
-앱의 분배금 계산은 서버와 같은 금액이 나오는지 따로 테스트합니다.
+웹앱 테스트는 [웹앱](#웹앱-아이폰pc용)을 참고하세요. 앱의 분배금 계산은 서버와 같은 금액이 나오는지 따로 테스트합니다.
 
 ```bash
 ./gradlew :app:testDebugUnitTest

@@ -1,0 +1,191 @@
+/* 라이트·다크 테마 색. Android 앱의 Material 기본 색과 비슷하게 맞췄다. */
+:root {
+  color-scheme: light;
+  --primary: #6750a4;
+  --on-primary: #ffffff;
+  --primary-container: #eaddff;
+  --on-primary-container: #21005d;
+  --surface: #fef7ff;
+  --surface-container: #f3edf7;
+  --surface-variant: #e7e0ec;
+  --on-surface: #1d1b20;
+  --on-surface-variant: #49454f;
+  --outline: #79747e;
+  --error: #b3261e;
+  --error-container: #f9dedc;
+  --scrim: rgba(0, 0, 0, 0.4);
+  --radius: 12px;
+  --tab-height: 64px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --primary: #d0bcff;
+  --on-primary: #381e72;
+  --primary-container: #4f378b;
+  --on-primary-container: #eaddff;
+  --surface: #141218;
+  --surface-container: #211f26;
+  --surface-variant: #49454f;
+  --on-surface: #e6e0e9;
+  --on-surface-variant: #cac4d0;
+  --outline: #938f99;
+  --error: #f2b8b5;
+  --error-container: #8c1d18;
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--surface); color: var(--on-surface); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-tap-highlight-color: transparent;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--primary); }
+
+/* 한가운데 좁은 열: 폰에서는 화면 전체, PC에서는 가운데 640px */
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: calc(16px + var(--safe-top)) 16px calc(24px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.page.with-tabs { padding-bottom: calc(var(--tab-height) + 24px + var(--safe-bottom)); }
+.page.centered { min-height: 100dvh; justify-content: center; }
+
+h1 { font-size: 24px; margin: 8px 0 4px; font-weight: 600; }
+h2 { font-size: 18px; margin: 12px 0 0; font-weight: 600; }
+h3 { font-size: 15px; margin: 4px 0 0; font-weight: 600; }
+.muted { color: var(--on-surface-variant); }
+.small { font-size: 13px; }
+.error { color: var(--error); }
+.primary-text { color: var(--primary); }
+.row { display: flex; gap: 8px; align-items: center; }
+.row.wrap { flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 버튼 */
+.btn, .btn-outline, .btn-text {
+  border: none; border-radius: 999px; padding: 10px 18px; cursor: pointer; font-weight: 600;
+  min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn { background: var(--primary); color: var(--on-primary); }
+.btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--outline); }
+.btn-text { background: transparent; color: var(--primary); padding: 10px 12px; }
+.btn:disabled, .btn-outline:disabled, .btn-text:disabled { opacity: 0.4; cursor: default; }
+.btn.full, .btn-outline.full { width: 100%; }
+
+/* 입력 */
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 13px; color: var(--on-surface-variant); }
+.input, select.input {
+  width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--outline);
+  background: var(--surface); min-height: 44px; font-size: 16px; /* 16px 미만이면 아이폰이 확대한다 */
+}
+.input:focus { outline: 2px solid var(--primary); border-color: transparent; }
+
+/* 카드·칩·배지 */
+.card { background: var(--surface-container); border-radius: var(--radius); padding: 14px 16px; }
+.card.clickable { cursor: pointer; }
+.card.clickable:active { filter: brightness(0.96); }
+.chip {
+  border: 1px solid var(--outline); background: transparent; border-radius: 8px; padding: 6px 12px;
+  min-height: 36px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--primary-container); color: var(--on-primary-container); border-color: transparent; }
+.chip:disabled { opacity: 0.38; cursor: default; }
+.badge { display: inline-block; border-radius: 6px; padding: 3px 8px; font-size: 13px; font-weight: 600; }
+.badge.action { background: var(--primary); color: var(--on-primary); }
+.badge.info { background: var(--surface-variant); color: var(--on-surface-variant); }
+.count { min-width: 18px; height: 18px; border-radius: 9px; background: var(--error); color: #fff; font-size: 11px;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; position: absolute; top: 2px; left: 55%; }
+
+/* 스위치 */
+.switch { appearance: none; width: 52px; height: 32px; border-radius: 16px; background: var(--surface-variant);
+  border: 2px solid var(--outline); position: relative; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; top: 6px; left: 6px;
+  background: var(--outline); transition: all 0.15s; }
+.switch:checked { background: var(--primary); border-color: var(--primary); }
+.switch:checked::after { left: 26px; top: 4px; width: 20px; height: 20px; background: var(--on-primary); }
+
+.check { width: 22px; height: 22px; accent-color: var(--primary); flex: none; }
+.avatar { width: 56px; height: 56px; object-fit: contain; flex: none; }
+
+/* 하단 메뉴 */
+.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  background: var(--surface-container); padding-bottom: var(--safe-bottom);
+  display: flex; justify-content: center;
+}
+.tabs nav { display: flex; width: 100%; max-width: 640px; height: var(--tab-height); }
+.tabs a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  text-decoration: none; color: var(--on-surface-variant); font-size: 12px; position: relative; }
+.tabs a.active { color: var(--on-surface); font-weight: 600; }
+.tabs a .icon { width: 56px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; }
+.tabs a.active .icon { background: var(--primary-container); color: var(--on-primary-container); }
+.tabs svg { width: 22px; height: 22px; fill: currentColor; }
+
+/* 알림(토스트) */
+.toast-region { position: fixed; left: 0; right: 0; bottom: calc(16px + var(--safe-bottom));
+  display: flex; justify-content: center; pointer-events: none; z-index: 30; padding: 0 16px; }
+/* 하단 탭이 있는 화면에서는 탭 위에 띄운다. */
+body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--safe-bottom)); }
+.toast { background: var(--on-surface); color: var(--surface); padding: 12px 16px; border-radius: 8px; max-width: 600px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25); animation: toast-in 0.15s ease-out; }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }
+
+/* 로딩 */
+.loading { display: flex; justify-content: center; padding: 24px 0; }
+.spinner { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--surface-variant); border-top-color: var(--primary);
+  animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 대화상자 */
+.dialog-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 40; display: flex; align-items: center;
+  justify-content: center; padding: 16px; }
+.dialog { background: var(--surface-container); border-radius: 24px; padding: 20px; width: 100%; max-width: 480px;
+  max-height: calc(100dvh - 32px); overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 4px; }
+.dialog.wide { max-width: 760px; height: calc(100dvh - 32px); }
+.dialog.wide .grid-wrap { flex: 1; overflow: auto; }
+.dialog .grid .head { background: var(--surface-container); }
+
+/* 시간표 격자 */
+.grid-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.grid { display: grid; gap: 2px; font-size: 11px; }
+.grid .head { text-align: center; padding: 4px 0; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.grid .time { text-align: right; padding-right: 4px; color: var(--on-surface-variant); line-height: 1; }
+.grid .cell { height: 22px; border-radius: 3px; background: var(--surface-variant); }
+.grid .cell.on { background: var(--error); }
+.grid .cell.raid { background: var(--primary); }
+.grid .cell.routine { background: var(--error-container); }
+.grid .cell.past { opacity: 0.4; }
+.legend { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
+.banner { background: var(--primary-container); color: var(--on-primary-container); border-radius: var(--radius); padding: 12px 14px; }
+
+/* 정산 화면: 위는 정산 상태(따로 스크롤), 아래는 채팅이 남은 높이를 다 쓴다 (Android와 같은 배치). */
+.page.settlement-page { height: 100dvh; padding-bottom: calc(8px + var(--safe-bottom)); gap: 8px; }
+.settlement-status { max-height: 42dvh; overflow-y: auto; flex: none; }
+.divider { border: none; border-top: 1px solid var(--surface-variant); margin: 0; width: 100%; }
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.chat-list { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.chat-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.chat-item.mine { align-items: flex-end; }
+.chat-item .bubble { background: var(--surface-container); border-radius: var(--radius); overflow: hidden; max-width: 80%; }
+.chat-item.mine .bubble { background: var(--primary-container); color: var(--on-primary-container); }
+.chat-item .bubble img { display: block; max-width: 240px; max-height: 240px; min-height: 80px; object-fit: contain; cursor: zoom-in; }
+.chat-item .bubble .text { padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
+.chat-input textarea { resize: none; max-height: 96px; }
+/* 정산 화면에서는 채팅 입력창 위에 띄운다. */
+body:has(.settlement-page) .toast-region { bottom: calc(80px + var(--safe-bottom)); }

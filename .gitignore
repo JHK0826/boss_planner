@@ -23,3 +23,9 @@ functions/lib/
 .firebaserc
 *-debug.log
 firebase-export-*/
+
+# Web app
+web/dist/
+web/.env.local
+!web/.env.example
+web/e2e/screenshots/
