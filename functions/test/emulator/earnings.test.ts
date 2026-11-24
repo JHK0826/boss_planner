@@ -5,6 +5,7 @@ import { deleteStaleSchedulerCaches } from "../../src/characterRefresh";
 import { finalizeEarnings, getSchedulerState } from "../../src/earnings/service";
 import type { NexonBossContent } from "../../src/nexon/client";
 import { createParty, joinParty } from "../../src/party/service";
+import { runDailyClearCheck } from "../../src/schedule/clear";
 import { confirmReceived, markPaid, registerSettlement } from "../../src/settlement/service";
 
 const PROJECT = "demo-boss-planner";
@@ -130,6 +131,20 @@ describe("finalizeEarnings", () => {
     await finalizeEarnings(db, kst("2026-12-01T05:00:00"), makeClient, PRICES);
     expect(getBossContents).toHaveBeenCalledWith("key-a", "ocid-a", "2026-11-30");
     expect((await earnings("a", "M-202611"))?.characters["char-a"]).toEqual({ crystalValue: 1_000_000_000, crystalCount: 1 });
+  });
+
+  it("매일 05:00 작업이 목요일에 끝난 주를 실제 가격표로 확정한다", async () => {
+    const { makeClient, getBossContents } = fakeNexon([boss("림보", "bossWeekly", true)]);
+    await runDailyClearCheck(db, kst("2026-11-19T05:00:00"), (apiKey) => ({
+      ...makeClient(apiKey),
+      listCharacters: async () => [],
+      getCharacterBasic: async () => {
+        throw new Error("unused");
+      },
+    }));
+    expect(getBossContents).toHaveBeenCalledWith("key-a", "ocid-a", "2026-11-18");
+    // 하드 림보 23억 8500만, 혼자
+    expect((await earnings("a", "W-20261112"))?.characters["char-a"]).toEqual({ crystalValue: 2_385_000_000, crystalCount: 1 });
   });
 
   it("목요일·1일이 아니면 아무것도 하지 않는다", async () => {

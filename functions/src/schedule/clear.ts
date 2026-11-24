@@ -131,9 +131,18 @@ export async function runDailyClearCheck(
     }
   }
 
-  await refreshStaleCharacterLists(db, nowMs, makeClient);
-  await refreshStaleCharacterInfo(db, nowMs, makeClient);
-  await deleteStaleSchedulerCaches(db, nowMs);
-  await finalizeEarnings(db, nowMs, makeClient);
+  // 정리 작업은 서로 따로 돈다. 하나가 실패해도(예: 새 인덱스가 아직 만들어지는 중) 나머지는 계속한다.
+  await runMaintenance("refreshStaleCharacterLists", () => refreshStaleCharacterLists(db, nowMs, makeClient));
+  await runMaintenance("refreshStaleCharacterInfo", () => refreshStaleCharacterInfo(db, nowMs, makeClient));
+  await runMaintenance("deleteStaleSchedulerCaches", () => deleteStaleSchedulerCaches(db, nowMs));
+  await runMaintenance("finalizeEarnings", () => finalizeEarnings(db, nowMs, makeClient));
   return counts;
+}
+
+async function runMaintenance(name: string, task: () => Promise<unknown>): Promise<void> {
+  try {
+    await task();
+  } catch (error) {
+    console.error(`${name} failed`, (error as Error).message);
+  }
 }
