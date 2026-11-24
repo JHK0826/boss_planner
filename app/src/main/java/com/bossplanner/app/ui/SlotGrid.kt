@@ -30,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.bossplanner.app.data.TimeSlots
@@ -118,10 +120,24 @@ fun BulkFillPanel(
 
 /** 현재 값을 보여 주는 버튼. 누르면 선택지가 펼쳐진다. onSelect에는 고른 항목의 순번을 넘긴다. */
 @Composable
-internal fun Dropdown(label: String, options: List<String>, enabled: Boolean, onSelect: (Int) -> Unit) {
+internal fun Dropdown(
+    label: String,
+    options: List<String>,
+    enabled: Boolean,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    /** true면 버튼이 주어진 자리를 가로로 꽉 채운다 (modifier로 폭을 정할 때 쓴다) */
+    fillWidth: Boolean = false,
+) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(enabled = enabled, onClick = { open = true }) { Text(label) }
+    Box(modifier = modifier) {
+        OutlinedButton(
+            enabled = enabled,
+            onClick = { open = true },
+            modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
+        ) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             options.forEachIndexed { index, option ->
                 DropdownMenuItem(
@@ -220,6 +236,25 @@ private fun SlotCell(width: Dp, blocked: Boolean, past: Boolean, enabled: Boolea
             // 지난 시간은 추천 대상이 아니라서 고칠 필요가 없다.
             .clickable(enabled = enabled && !past, onClick = onToggle),
     )
+}
+
+/**
+ * 주기의 날짜별 열 (주간 7일, 월간 28~31일). 불가 시간 입력과 파티원 시간표 보기에 같이 쓴다.
+ * @param startMs 주기 시작 (그날 00:00 KST)
+ * @param endMs 주기 끝 (다음 주기 시작)
+ */
+fun periodColumns(startMs: Long, endMs: Long): List<GridColumn> {
+    val dayMs = TimeSlots.SLOTS_PER_DAY * TimeSlots.SLOT_MS
+    val dayCount = ((endMs - startMs) / dayMs).toInt()
+    return List(dayCount) { day ->
+        val dayStart = startMs + day * dayMs
+        GridColumn(
+            title = TimeSlots.weekdayLabel(dayStart),
+            subtitle = TimeSlots.dayLabel(dayStart),
+            weekday = TimeSlots.weekday(dayStart),
+            slotIds = List(TimeSlots.SLOTS_PER_DAY) { row -> TimeSlots.slotId(dayStart + row * TimeSlots.SLOT_MS) },
+        )
+    }
 }
 
 /** 요일 7개(월~일)짜리 열. 고정 불가 시간 편집에 쓴다. */

@@ -18,9 +18,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
+import com.bossplanner.app.data.PartyStatus
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,7 +45,9 @@ import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
 import com.bossplanner.app.data.CharacterInfo
 import com.bossplanner.app.data.Party
+import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
+import com.bossplanner.app.data.Raid
 import com.bossplanner.app.data.RoutineRepository
 import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.UserProfile
@@ -48,16 +56,17 @@ private val TAB_PADDING = 24.dp
 
 /** 내 캐릭터: 보스에 참여하도록 골라 둔 캐릭터를 본다. */
 @Composable
-fun CharactersTab(characters: List<CharacterInfo>, onEditCharacters: () -> Unit) {
+fun CharactersTab(characters: List<CharacterInfo>?, onEditCharacters: () -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = TAB_PADDING),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { TabTitle("내 캐릭터") }
-        if (characters.isEmpty()) {
-            item { Text("선택한 캐릭터가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+        when {
+            characters == null -> item { Loading() }
+            characters.isEmpty() -> item { Text("선택한 캐릭터가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
         }
-        items(characters, key = { it.id }) { character ->
+        items(characters.orEmpty(), key = { it.id }) { character ->
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(model = character.imageUrl, contentDescription = null, modifier = Modifier.size(72.dp))
@@ -80,35 +89,125 @@ fun CharactersTab(characters: List<CharacterInfo>, onEditCharacters: () -> Unit)
     }
 }
 
-/** 파티: 내 파티 목록, 파티 만들기, 초대 코드로 가입 */
+/** 파티 목록 정렬 */
+enum class PartySort(val label: String) {
+    Todo("할 일 먼저"),
+    Character("캐릭터순"),
+    Name("파티 이름순"),
+    Recent("최근 가입순"),
+}
+
+/**
+ * 파티: 내 파티 목록, 파티 만들기, 초대 코드로 가입.
+ * 캐릭터를 골라 그 캐릭터가 들어간 파티만 볼 수 있고, 목록을 정렬할 수 있다.
+ *
+ * @param characterFilter 이 캐릭터(characterId)가 들어간 파티만 본다. null이면 전체
+ */
 @Composable
 fun PartiesTab(
-    parties: List<Party>,
+    uid: String,
+    /** 내 파티 목록. 아직 받아 오는 중이면 null */
+    loadedParties: List<Party>?,
+    /** 파티별 상태 (내가 할 일). 아직 못 읽은 파티는 null */
+    statuses: Map<String, PartyStatus?>,
+    characterFilter: String?,
+    onCharacterFilterChange: (String?) -> Unit,
+    sort: PartySort,
+    onSortChange: (PartySort) -> Unit,
     onOpenParty: (partyId: String) -> Unit,
     onCreateParty: () -> Unit,
     onJoinParty: () -> Unit,
 ) {
+    val parties = loadedParties.orEmpty()
+    // 내 파티에 들어가 있는 내 캐릭터들 (레벨 높은 순)과 캐릭터별 파티 수
+    val myCharacters = parties.mapNotNull { it.members[uid] }
+        .distinctBy { it.characterId }
+        .sortedWith(compareByDescending<PartyMember> { it.level }.thenBy { it.characterName })
+    val partyCount = parties.groupingBy { it.members[uid]?.characterId }.eachCount()
+    // 고른 캐릭터의 파티가 없어졌으면(탈퇴 등) 전체로 돌아간다.
+    val activeFilter = characterFilter?.takeIf { id -> myCharacters.any { it.characterId == id } }
+    LaunchedEffect(activeFilter, characterFilter) {
+        if (characterFilter != null && activeFilter == null) onCharacterFilterChange(null)
+    }
+
+    val mine = { party: Party -> party.members[uid] }
+    val shown = parties
+        .filter { activeFilter == null || mine(it)?.characterId == activeFilter }
+        .let { list ->
+            val byCharacter = compareByDescending<Party> { mine(it)?.level ?: 0 }
+                .thenBy { mine(it)?.characterName.orEmpty() }
+                .thenBy { it.name }
+            when (sort) {
+                PartySort.Todo -> list.sortedWith(
+                    compareByDescending<Party> { statuses[it.id]?.needsAction == true }.then(byCharacter),
+                )
+                PartySort.Character -> list.sortedWith(byCharacter)
+                PartySort.Name -> list.sortedBy { it.name }
+                PartySort.Recent -> list.sortedByDescending { mine(it)?.joinedAtMs ?: 0 }
+            }
+        }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = TAB_PADDING),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item { TabTitle("파티") }
+        val todoCount = statuses.values.count { it?.needsAction == true }
+        if (todoCount > 0) {
+            item {
+                Text(
+                    "할 일이 있는 파티 ${todoCount}개",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onCreateParty, modifier = Modifier.weight(1f)) { Text("파티 만들기") }
                 OutlinedButton(onClick = onJoinParty, modifier = Modifier.weight(1f)) { Text("코드로 가입") }
             }
         }
-        if (parties.isEmpty()) {
+        if (loadedParties == null) {
+            item { Loading() }
+        } else if (parties.isEmpty()) {
             item { Text("아직 가입한 파티가 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+        } else {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val selected = myCharacters.firstOrNull { it.characterId == activeFilter }
+                    Dropdown(
+                        label = selected?.let { "${it.characterName} (${partyCount[it.characterId] ?: 0})" }
+                            ?: "전체 캐릭터 (${parties.size})",
+                        options = listOf("전체 캐릭터 (${parties.size})") +
+                            myCharacters.map { "${it.characterName} · Lv.${it.level} (${partyCount[it.characterId] ?: 0})" },
+                        enabled = true,
+                        onSelect = { index -> onCharacterFilterChange(if (index == 0) null else myCharacters[index - 1].characterId) },
+                        modifier = Modifier.weight(1f),
+                        fillWidth = true,
+                    )
+                    Dropdown(
+                        label = sort.label,
+                        options = PartySort.entries.map { it.label },
+                        enabled = true,
+                        onSelect = { onSortChange(PartySort.entries[it]) },
+                    )
+                }
+            }
         }
-        items(parties, key = { it.id }) { party ->
+        items(shown, key = { it.id }) { party ->
+            val me = mine(party)
             Card(modifier = Modifier.fillMaxWidth().clickable { onOpenParty(party.id) }) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    statuses[party.id]?.takeIf { it.text.isNotEmpty() }?.let { StatusBadge(it) }
                     Text(party.name, style = MaterialTheme.typography.titleMedium)
                     Text(party.bossLabel, style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "${if (party.isWeekly) "주간" else "월간"} · ${party.memberUids.size}명",
+                        listOfNotNull(
+                            if (party.isWeekly) "주간" else "월간",
+                            "${party.memberUids.size}명",
+                            me?.let { "내 캐릭터 ${it.characterName} (Lv.${it.level})" },
+                        ).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -133,6 +232,24 @@ fun SettingsTab(profile: UserProfile, onEditApiKey: () -> Unit, onSignOut: () ->
         if (profile.displayName.isNotBlank()) {
             Text("닉네임", style = MaterialTheme.typography.labelMedium)
             Text(profile.displayName, style = MaterialTheme.typography.titleMedium)
+        }
+        val theme = LocalThemeSetting.current
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { theme.onChange(!theme.dark) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("다크 모드", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (theme.followsSystem) "휴대폰 설정을 따르는 중" else "앱에서 직접 설정함",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = theme.dark, onCheckedChange = null)
+        }
+        if (!theme.followsSystem) {
+            TextButton(onClick = { theme.onChange(null) }) { Text("휴대폰 설정 따르기") }
         }
         OutlinedButton(onClick = onEditApiKey, modifier = Modifier.fillMaxWidth()) { Text("API Key 다시 등록") }
         OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("로그아웃") }
@@ -161,7 +278,10 @@ fun TimetableTab(
     val now = remember { System.currentTimeMillis() }
     val weekStart = remember { TimeSlots.weekStart(now) }
     val weekEnd = weekStart + 7 * DAY_MS
-    val raids by remember(uid, weekStart) { parties.myRaids(uid, weekStart) }.collectAsStateWithLifecycle(emptyList())
+    // null = 아직 받아 오는 중
+    val loadedRaids by remember(uid, weekStart) { parties.myRaids(uid, weekStart) }
+        .collectAsStateWithLifecycle<List<Raid>?>(null)
+    val raids = loadedRaids.orEmpty()
     var routine by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     LaunchedEffect(uid) {
@@ -200,7 +320,9 @@ fun TimetableTab(
                     modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                 )
             }
-            if (raids.isEmpty()) {
+            if (loadedRaids == null) {
+                item { Loading() }
+            } else if (raids.isEmpty()) {
                 item { Text("이번 주 이후로 확정된 일정이 없습니다.", style = MaterialTheme.typography.bodyMedium) }
             }
             items(raids, key = { "${it.partyId}-${it.startMs}" }) { raid ->
@@ -280,10 +402,35 @@ fun TimetableTab(
 }
 
 @Composable
-private fun Legend(color: Color, label: String) {
+internal fun Legend(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(Modifier.size(12.dp).background(color))
         Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/** 파티 카드 맨 위의 상태 표시. 내가 할 일이면 강조색, 기다리는 중이면 흐린 색 */
+@Composable
+private fun StatusBadge(status: PartyStatus) {
+    val action = status.needsAction
+    Surface(
+        color = if (action) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            if (action) "할 일 · ${status.text}" else status.text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (action) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/** 목록을 받아 오는 동안 보여 주는 표시 */
+@Composable
+private fun Loading() {
+    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator()
     }
 }
 

@@ -60,17 +60,8 @@ fun UnavailableScreen(
     parties: PartyRepository = remember { PartyRepository() },
     routines: RoutineRepository = remember { RoutineRepository() },
 ) {
-    val dayCount = ((target.periodEndMs - target.periodStartMs) / (TimeSlots.SLOT_MS * TimeSlots.SLOTS_PER_DAY)).toInt()
-    val columns = remember(target.periodStartMs, dayCount) {
-        List(dayCount) { day ->
-            val dayStart = target.periodStartMs + day * TimeSlots.SLOTS_PER_DAY * TimeSlots.SLOT_MS
-            GridColumn(
-                title = TimeSlots.weekdayLabel(dayStart),
-                subtitle = TimeSlots.dayLabel(dayStart),
-                weekday = TimeSlots.weekday(dayStart),
-                slotIds = List(TimeSlots.SLOTS_PER_DAY) { row -> TimeSlots.slotId(dayStart + row * TimeSlots.SLOT_MS) },
-            )
-        }
+    val columns = remember(target.periodStartMs, target.periodEndMs) {
+        periodColumns(target.periodStartMs, target.periodEndMs)
     }
     val now = remember { System.currentTimeMillis() }
     val firstFutureSlot = ((now - target.periodStartMs) / TimeSlots.SLOT_MS).toInt() + 1
@@ -80,6 +71,7 @@ fun UnavailableScreen(
     var prefilled by remember { mutableStateOf(false) }
     var applyToOthers by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
+    val showMessage = LocalShowMessage.current
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -169,7 +161,10 @@ fun UnavailableScreen(
                     scope.launch {
                         try {
                             parties.setUnavailable(partyId, target.periodId, uid, slots, submitted = true)
-                            if (applyToOthers) submitToOtherParties(parties, otherParties, target, uid, slots)
+                            val others = if (applyToOthers) submitToOtherParties(parties, otherParties, target, uid, slots) else 0
+                            showMessage.show(
+                                if (others > 0) "불가 시간을 제출했습니다 (다른 파티 ${others}곳에도 제출)" else "불가 시간을 제출했습니다",
+                            )
                             onDone()
                         } catch (e: Exception) {
                             error = if (e is FirebaseFirestoreException) {
@@ -191,7 +186,7 @@ fun UnavailableScreen(
 }
 
 /**
- * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출한다.
+ * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출하고, 제출한 파티 수를 돌려준다.
  * 주기가 다른 파티(주간 ↔ 월간)나 이미 확정된 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
  */
 private suspend fun submitToOtherParties(
@@ -200,16 +195,19 @@ private suspend fun submitToOtherParties(
     target: UnavailableTarget,
     uid: String,
     slots: List<String>,
-) {
+): Int {
+    var submitted = 0
     for (party in otherParties) {
         try {
             val schedule = parties.latestScheduleOnce(party.id) ?: continue
             val samePeriod = schedule.periodStartMs == target.periodStartMs && schedule.periodEndMs == target.periodEndMs
             if (schedule.acceptsInput && samePeriod) {
                 parties.setUnavailable(party.id, schedule.id, uid, slots, submitted = true)
+                submitted++
             }
         } catch (e: Exception) {
             // 이 파티는 건너뛴다. 그 파티 화면에서 따로 제출할 수 있다.
         }
     }
+    return submitted
 }

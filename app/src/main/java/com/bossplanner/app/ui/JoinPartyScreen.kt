@@ -39,6 +39,7 @@ fun JoinPartyScreen(
     var code by rememberSaveable { mutableStateOf("") }
     var characterId by rememberSaveable { mutableStateOf(characters.firstOrNull()?.id) }
     var busy by remember { mutableStateOf(false) }
+    val showMessage = LocalShowMessage.current
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -76,7 +77,9 @@ fun JoinPartyScreen(
                 error = null
                 scope.launch {
                     try {
-                        onJoined(parties.joinParty(code, selected))
+                        val joined = parties.joinParty(code, selected)
+                        showMessage.show("파티에 가입했습니다")
+                        onJoined(joined)
                     } catch (e: Exception) {
                         error = e.userMessage()
                     } finally {

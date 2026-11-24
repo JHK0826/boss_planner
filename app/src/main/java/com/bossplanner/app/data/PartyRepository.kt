@@ -13,6 +13,9 @@ import com.google.firebase.storage.StorageMetadata
 import java.util.UUID
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
@@ -42,11 +45,12 @@ class PartyRepository(
     /**
      * 최근 주기의 일정들 (최신순). 첫 번째가 이번 주기이고, 나머지는 정산이 덜 끝난 지난 주기를 찾는 데 쓴다.
      * 아직 첫 주기가 시작되지 않았으면 빈 목록.
+     * @param limit 몇 주기까지 읽을지. 파티 화면은 지난 정산을 넉넉히 보려고 5, 파티 목록은 2를 쓴다.
      */
-    fun recentSchedules(partyId: String): Flow<List<Schedule>> =
+    fun recentSchedules(partyId: String, limit: Long = 5): Flow<List<Schedule>> =
         db.collection("parties").document(partyId).collection("schedules")
             .orderBy("periodStart", Query.Direction.DESCENDING)
-            .limit(5)
+            .limit(limit)
             .listen(emptyList()) { snapshot -> snapshot.documents.mapNotNull(::toSchedule) }
 
     /** 파티의 가장 최근 일정을 한 번만 읽는다. 없으면 null */
@@ -57,6 +61,61 @@ class PartyRepository(
             .get()
             .await()
             .documents.firstOrNull()?.let(::toSchedule)
+
+    /**
+     * 파티 목록의 상태 표시에 필요한 일정 데이터를 실시간으로 모은다.
+     *
+     * - 일정은 이번 주기와 바로 전 주기 두 개만 읽는다(지난 주기의 끝나지 않은 정산을 찾는 데 충분하다).
+     * - 입력·투표 중이면 그 일정의 불가 시간과 투표를, 정산 중인 일정은 분배금 상태를 함께 지켜본다.
+     * - 이 하위 구독은 "무엇을 지켜봐야 하는지"가 바뀔 때만 다시 붙인다. 후보나 동의 상태처럼
+     *   일정 문서의 다른 값이 바뀔 때는 그대로 두고, 바뀐 일정만 화면에 반영한다.
+     */
+    fun partySnapshot(partyId: String): Flow<PartySnapshot> =
+        recentSchedules(partyId, limit = 2).withDetails(
+            keyOf = SnapshotTargets::of,
+            details = { targets -> snapshotDetails(partyId, targets) },
+        ) { schedules, details ->
+            PartySnapshot(schedules, details.unavailable, details.votes, details.settlements)
+        }
+
+    /** partySnapshot이 일정 문서 말고 더 지켜보는 대상 */
+    private data class SnapshotTargets(
+        /** 불가 시간을 지켜볼 일정 (입력을 받는 중일 때) */
+        val inputPeriod: String?,
+        /** 투표를 지켜볼 일정 (후보가 나와 있을 때) */
+        val votePeriod: String?,
+        /** 분배금 상태를 지켜볼 일정들 (정산이 끝나지 않았을 때) */
+        val settlementPeriods: List<String>,
+    ) {
+        companion object {
+            fun of(schedules: List<Schedule>): SnapshotTargets {
+                val current = schedules.firstOrNull()?.takeIf { it.acceptsInput }
+                return SnapshotTargets(
+                    inputPeriod = current?.id,
+                    votePeriod = current?.takeIf { it.candidates.isNotEmpty() }?.id,
+                    settlementPeriods = schedules.filter { it.settlementOpen && it.settlement != null }.map { it.id },
+                )
+            }
+        }
+    }
+
+    private class SnapshotDetails(
+        val unavailable: Map<String, Unavailable>,
+        val votes: Map<String, Vote>,
+        val settlements: Map<String, List<SettlementEntry>>,
+    )
+
+    private fun snapshotDetails(partyId: String, targets: SnapshotTargets): Flow<SnapshotDetails> {
+        val unavailableFlow = targets.inputPeriod?.let { unavailable(partyId, it) } ?: flowOf(emptyMap())
+        val votesFlow = targets.votePeriod?.let { votes(partyId, it) } ?: flowOf(emptyMap())
+        val settlementFlow: Flow<Map<String, List<SettlementEntry>>> =
+            if (targets.settlementPeriods.isEmpty()) {
+                flowOf(emptyMap())
+            } else {
+                combine(targets.settlementPeriods.map { id -> settlementEntries(partyId, id).map { id to it } }) { it.toMap() }
+            }
+        return combine(unavailableFlow, votesFlow, settlementFlow, ::SnapshotDetails)
+    }
 
     fun schedule(partyId: String, periodId: String): Flow<Schedule?> = callbackFlow {
         val registration = scheduleRef(partyId, periodId).addSnapshotListener { snapshot, error ->
@@ -330,6 +389,7 @@ class PartyRepository(
                 job = m["job"] as? String ?: "",
                 level = (m["level"] as? Number)?.toInt() ?: 0,
                 characterId = m["characterId"] as? String ?: "",
+                joinedAtMs = (m["joinedAt"] as? Timestamp)?.toMillis() ?: 0,
             )
         }.toMap()
         return Party(

@@ -39,6 +39,7 @@ fun RoutineScreen(
     val columns = remember { weekdayColumns(RoutineRepository::key) }
     var selected by remember { mutableStateOf<Set<String>?>(null) }
     var busy by remember { mutableStateOf(false) }
+    val showMessage = LocalShowMessage.current
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -80,6 +81,7 @@ fun RoutineScreen(
                     scope.launch {
                         try {
                             routines.save(uid, slots)
+                            showMessage.show("고정 불가 시간을 저장했습니다")
                             onDone()
                         } catch (e: Exception) {
                             error = "저장하지 못했습니다. 네트워크 상태를 확인하고 다시 시도해 주세요."

@@ -84,7 +84,7 @@ fun SettlementScreen(
         .collectAsStateWithLifecycle(emptyList())
 
     var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val showMessage = LocalShowMessage.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -97,24 +97,16 @@ fun SettlementScreen(
         return
     }
 
-    fun run(action: suspend () -> Unit) {
-        busy = true
-        error = null
-        scope.launch {
-            try {
-                action()
-            } catch (e: Exception) {
-                error = when (e) {
-                    is FirebaseFirestoreException -> "보내지 못했습니다. 다시 시도해 주세요."
-                    is StorageException -> "이미지를 올리지 못했습니다. 네트워크 상태를 확인하고 다시 시도해 주세요."
-                    is IllegalArgumentException -> e.message
-                    else -> e.userMessage()
-                }
-            } finally {
-                busy = false
+    /** 서버에 보내고 결과를 화면 아래 알림으로 보여 준다. */
+    fun run(success: String?, action: suspend () -> Unit) =
+        scope.runAction(showMessage, { busy = it }, success, { e ->
+            when (e) {
+                is FirebaseFirestoreException -> "보내지 못했습니다. 다시 시도해 주세요."
+                is StorageException -> "이미지를 올리지 못했습니다. 네트워크 상태를 확인하고 다시 시도해 주세요."
+                is IllegalArgumentException -> e.message
+                else -> e.userMessage()
             }
-        }
-    }
+        }, action)
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton(onClick = onBack, enabled = !busy) { Text("← ${currentParty.name}") }
@@ -130,13 +122,14 @@ fun SettlementScreen(
                 schedule = currentSchedule,
                 entries = entries,
                 busy = busy,
-                onRegister = { sale, fee, weights -> run { parties.registerSettlement(partyId, periodId, sale, fee, weights) } },
-                onMarkPaid = { recipient -> run { parties.markPaid(partyId, periodId, recipient) } },
-                onConfirmReceived = { run { parties.confirmReceived(partyId, periodId) } },
+                onRegister = { sale, fee, weights -> run("분배금을 등록했습니다. 파티원에게 알림을 보냈습니다") { parties.registerSettlement(partyId, periodId, sale, fee, weights) } },
+                onMarkPaid = { recipient ->
+                    run("${currentParty.nameOf(recipient)}님에게 지급함으로 표시했습니다") { parties.markPaid(partyId, periodId, recipient) }
+                },
+                onConfirmReceived = { run("수령을 확인했습니다") { parties.confirmReceived(partyId, periodId) } },
             )
         }
 
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         HorizontalDivider()
 
         Chat(
@@ -145,9 +138,9 @@ fun SettlementScreen(
             messages = messages,
             busy = busy,
             modifier = Modifier.weight(1f),
-            onSend = { text -> run { parties.sendMessage(partyId, periodId, uid, text) } },
+            onSend = { text -> run(null) { parties.sendMessage(partyId, periodId, uid, text) } },
             onSendImage = { imageUri, text ->
-                run {
+                run(null) {
                     val jpeg = ImageCompressor.toJpeg(context, imageUri)
                     val url = parties.uploadChatImage(partyId, periodId, uid, jpeg)
                     parties.sendMessage(partyId, periodId, uid, text, url)

@@ -7,6 +7,8 @@ data class PartyMember(
     val job: String,
     val level: Int,
     val characterId: String,
+    /** 이 파티에 가입한 시각. 모르면 0 */
+    val joinedAtMs: Long,
 )
 
 /** 파티가 잡는 보스 하나. 여러 보스를 묶어 한 번에 갈 수 있다. */
