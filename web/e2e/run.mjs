@@ -251,6 +251,65 @@ try {
   await shot(a, "10-settled");
   step("레이드가 끝나면 클리어를 기록하고 정산 버튼이 나온다");
 
+  // ---------- 분배금 정산 ----------
+  await a.getByRole("button", { name: "분배금 등록·정산 채팅" }).click();
+  await a.getByRole("heading", { name: "분배금 정산" }).waitFor();
+  await a.getByLabel("경매장 판매액 (메소)").fill("100000000");
+  await a.getByText("1억 메소").waitFor();
+  // 실수령 9500만 ÷ (0.95 + 1명) = 48,717,948 → 100메소 단위로 내림 (서버 calc.ts와 같은 식)
+  await a.getByText("48,717,900메소 (4871만 7900)").waitFor();
+  await shot(a, "11-settlement-form");
+  await a.getByRole("button", { name: "분배금 등록" }).click();
+  await a.getByText("분배금을 등록했습니다. 파티원에게 알림을 보냈습니다").waitFor();
+  await a.getByText("비숍 정산금").waitFor();
+  assert.equal((await scheduleRef.collection("settlement").doc(uidB).get()).get("amount"), 48717900);
+  step("판매액을 넣으면 정산금을 미리 계산해 보여 주고, 등록하면 서버가 같은 금액으로 저장한다");
+
+  await b.getByRole("button", { name: "← 파티 목록" }).click();
+  await b.getByText("스우팟").click();
+  await b.getByRole("button", { name: "분배금 정산 진행 중" }).click();
+  await b.getByText("경매장에 물건을 내 정산금 가격으로 올리고", { exact: false }).waitFor();
+  await b.getByLabel("메시지").fill("경매장에 올렸어요");
+  await b.getByRole("button", { name: "보내기" }).click();
+  await a.getByText("경매장에 올렸어요").waitFor();
+  step("정산 채팅으로 메시지를 주고받는다");
+
+  // 사진 첨부: 큰 이미지를 긴 쪽 1600px JPEG로 줄여 Storage에 올린다.
+  const upload = await a.evaluate(async ({ partyId, periodId, uid }) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 3000;
+    canvas.height = 2000;
+    canvas.getContext("2d").fillRect(0, 0, 3000, 2000);
+    const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    const { toJpeg } = await import("/src/lib/image.ts");
+    const api = await import("/src/data/api.ts");
+    const jpeg = await toJpeg(png);
+    const bitmap = await createImageBitmap(jpeg);
+    const url = await api.uploadChatImage(partyId, periodId, uid, jpeg);
+    const fetched = await fetch(url);
+    return { type: jpeg.type, width: bitmap.width, height: bitmap.height, status: fetched.status };
+  }, { partyId: partyDoc.id, periodId: scheduleRef.id, uid: uidA });
+  assert.deepEqual(upload, { type: "image/jpeg", width: 1600, height: 1067, status: 200 });
+  step("첨부 사진은 긴 쪽 1600px JPEG로 줄여 Storage에 올린다");
+
+  await a.getByRole("button", { name: "지급함" }).click();
+  await a.getByText("비숍님에게 지급함으로 표시했습니다").waitFor();
+  await b.getByRole("button", { name: "수령 확인" }).click();
+  await b.getByText("수령을 확인했습니다").waitFor();
+  await a.getByText("전원 수령 확인 · 정산 완료").waitFor();
+  await shot(b, "12-settlement-done");
+  step("판매자가 지급함을 누르고 파티원이 수령을 확인하면 정산이 끝난다");
+
+  await a.getByRole("button", { name: "← 스우팟" }).click();
+  await a.getByRole("button", { name: "정산 완료 · 내역 보기" }).waitFor();
+
+  // ---------- 알림 설정 (에뮬레이터에서는 웹 푸시 키가 없음) ----------
+  await a.getByRole("button", { name: "← 파티 목록" }).click();
+  await a.getByRole("link", { name: "설정" }).click();
+  await a.getByText("알림 설정이 아직 준비되지 않았습니다.").waitFor();
+  assert.equal(await a.getByLabel("알림").isDisabled(), true);
+  step("웹 푸시 키가 없으면 알림 스위치를 막고 안내한다");
+
   assert.deepEqual(errors, [], `브라우저 오류:\n${errors.join("\n")}`);
   console.log("E2E 통과");
 } catch (error) {

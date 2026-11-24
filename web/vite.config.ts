@@ -23,6 +23,14 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      // 알림(Firebase Cloud Messaging)을 받으려고 서비스 워커를 직접 쓴다: src/sw.ts
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
+      injectManifest: {
+        // Firebase SDK가 들어 있어 기본 한도(2MB)를 넘을 수 있다.
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+      },
       includeAssets: ["icon.svg", "apple-touch-icon.png"],
       manifest: {
         name: "보스 스케줄 매니저",

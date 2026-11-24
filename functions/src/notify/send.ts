@@ -27,6 +27,14 @@ export function toPartyInfo(snapshot: DocumentSnapshot): PartyInfo | null {
 }
 
 /**
+ * 웹앱(아이폰·PC)에서 알림을 눌렀을 때 열 주소. Firebase Hosting 기본 도메인의 그 파티 화면이다.
+ * 프로젝트 ID를 모르면(로컬 실행 등) undefined.
+ */
+export function webPartyLink(partyId: string, projectId: string | undefined = process.env.GCLOUD_PROJECT): string | undefined {
+  return projectId ? `https://${projectId}.web.app/parties/${encodeURIComponent(partyId)}` : undefined;
+}
+
+/**
  * 알림을 보낸다. 토큰은 users/{uid}/devices 문서 ID다.
  * 더 이상 유효하지 않은 토큰은 지운다. 알림 실패가 본 작업을 막지 않도록 예외를 던지지 않는다.
  */
@@ -37,11 +45,14 @@ export async function sendPushes(db: Firestore, pushes: Push[], sender: Sender =
       const deviceSnaps = await Promise.all(push.uids.map((uid) => db.collection(`users/${uid}/devices`).get()));
       const devices = deviceSnaps.flatMap((snap) => snap.docs);
       if (devices.length === 0) continue;
+      const link = webPartyLink(push.partyId);
       const result = await sender.sendEachForMulticast({
         tokens: devices.map((doc) => doc.id),
         notification: { title: push.title, body: push.body },
         data: { partyId: push.partyId },
         android: { notification: { channelId: "schedule" } },
+        // 웹앱 토큰: 알림을 누르면 그 파티 화면을 연다. Android 토큰에는 쓰이지 않는다.
+        ...(link ? { webpush: { fcmOptions: { link } } } : {}),
       });
       await Promise.all(
         result.responses.map((response, index) => {

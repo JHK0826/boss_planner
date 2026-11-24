@@ -8,7 +8,9 @@ import {
   signOut as firebaseSignOut,
 } from "firebase/auth";
 import {
+  addDoc,
   collection,
+  deleteDoc,
   doc,
   documentId,
   getDoc,
@@ -25,9 +27,11 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { auth, db, functions } from "../firebase";
+import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
+import { auth, db, functions, storage } from "../firebase";
 import type {
   BossCatalog,
+  ChatMessage,
   CharacterInfo,
   CharacterSummary,
   Party,
@@ -365,6 +369,67 @@ export async function submitToOtherParties(
   }
   return submitted;
 }
+
+// ---------- 정산·채팅 ----------
+
+/** 일정 하나 실시간 구독. 없거나 읽을 수 없으면 null */
+export const schedule =
+  (partyId: string, periodId: string): Subscribe<Schedule | null> =>
+  (onValue) =>
+    onSnapshot(
+      scheduleDoc(partyId, periodId),
+      (snapshot) => onValue(toSchedule(snapshot.id, snapshot.data())),
+      () => onValue(null),
+    );
+
+export const messages = (partyId: string, periodId: string): Subscribe<ChatMessage[]> =>
+  listen(query(collection(scheduleDoc(partyId, periodId), "messages"), orderBy("createdAt")), [], (snapshot) =>
+    snapshot.docs.map((d) => ({
+      id: d.id,
+      senderUid: d.get("senderUid") ?? "",
+      text: d.get("text") ?? "",
+      // 방금 보낸 메시지는 서버 시각이 아직 없어서 추정값을 쓴다.
+      createdAtMs: millis(d.get("createdAt", { serverTimestamps: "estimate" })) ?? 0,
+      imageUrl: typeof d.get("imageUrl") === "string" ? d.get("imageUrl") : null,
+    })),
+  );
+
+export const sendMessage = (partyId: string, periodId: string, uid: string, text: string, imageUrl: string | null = null) =>
+  addDoc(collection(scheduleDoc(partyId, periodId), "messages"), {
+    senderUid: uid,
+    text,
+    createdAt: serverTimestamp(),
+    ...(imageUrl ? { imageUrl } : {}),
+  });
+
+/**
+ * 채팅에 첨부할 이미지를 Firebase Storage에 올리고 내려받기 주소를 돌려준다.
+ * 경로는 storage.rules와 맞춰야 한다: 파티원만 읽고, 자기 폴더에만 올릴 수 있다.
+ */
+export async function uploadChatImage(partyId: string, periodId: string, uid: string, jpeg: Blob): Promise<string> {
+  const target = storageRef(storage, `parties/${partyId}/schedules/${periodId}/chat/${uid}/${crypto.randomUUID()}.jpg`);
+  await uploadBytes(target, jpeg, { contentType: "image/jpeg" });
+  return getDownloadURL(target);
+}
+
+/**
+ * 경매장 판매액과 수수료로 분배금을 등록한다. 파티원별 정산금은 서버가 계산한다.
+ * @param weights 실수령 기준 분배 비율 (uid → 1~100). 비어 있으면 전원 같은 몫
+ */
+export const registerSettlement = (partyId: string, periodId: string, saleAmount: number, feePercent: number, weights: Record<string, number>) =>
+  call("registerSettlement", { partyId, periodId, saleAmount, feePercent, weights });
+
+export const markPaid = (partyId: string, periodId: string, recipientUid: string) => call("markPaid", { partyId, periodId, recipientUid });
+
+export const confirmReceived = (partyId: string, periodId: string) => call("confirmReceived", { partyId, periodId });
+
+// ---------- 알림 기기 ----------
+
+/** 이 기기의 알림 토큰을 users/{uid}/devices/{token}에 저장한다. 토큰을 문서 ID로 써서 두 번 등록되지 않게 한다. */
+export const saveDeviceToken = (uid: string, token: string) =>
+  setDoc(doc(db, "users", uid, "devices", token), { platform: "web", updatedAt: serverTimestamp() });
+
+export const deleteDeviceToken = (uid: string, token: string) => deleteDoc(doc(db, "users", uid, "devices", token));
 
 // ---------- 고정 불가 시간 ----------
 

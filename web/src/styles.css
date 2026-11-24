@@ -173,3 +173,19 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 .legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
 
 .banner { background: var(--primary-container); color: var(--on-primary-container); border-radius: var(--radius); padding: 12px 14px; }
+
+/* 정산 화면: 위는 정산 상태(따로 스크롤), 아래는 채팅이 남은 높이를 다 쓴다 (Android와 같은 배치). */
+.page.settlement-page { height: 100dvh; padding-bottom: calc(8px + var(--safe-bottom)); gap: 8px; }
+.settlement-status { max-height: 42dvh; overflow-y: auto; flex: none; }
+.divider { border: none; border-top: 1px solid var(--surface-variant); margin: 0; width: 100%; }
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.chat-list { flex: 1; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.chat-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.chat-item.mine { align-items: flex-end; }
+.chat-item .bubble { background: var(--surface-container); border-radius: var(--radius); overflow: hidden; max-width: 80%; }
+.chat-item.mine .bubble { background: var(--primary-container); color: var(--on-primary-container); }
+.chat-item .bubble img { display: block; max-width: 240px; max-height: 240px; min-height: 80px; object-fit: contain; cursor: zoom-in; }
+.chat-item .bubble .text { padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
+.chat-input textarea { resize: none; max-height: 96px; }
+/* 정산 화면에서는 채팅 입력창 위에 띄운다. */
+body:has(.settlement-page) .toast-region { bottom: calc(80px + var(--safe-bottom)); }

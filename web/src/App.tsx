@@ -17,7 +17,8 @@ import { RoutineScreen } from "./screens/RoutineScreen";
 import { SettlementScreen } from "./screens/SettlementScreen";
 import { UnavailableScreen } from "./screens/UnavailableScreen";
 import { CharactersTab, PartiesTab, SettingsTab, TimetableTab } from "./screens/tabs";
-import { Loading } from "./ui/common";
+import { onForegroundPush, refreshPush } from "./lib/push";
+import { Loading, useToast } from "./ui/common";
 
 export function App() {
   const [uid, setUid] = useState<string | null | undefined>(undefined);
@@ -65,7 +66,14 @@ const TAB_PATHS = ["/parties", "/characters", "/timetable", "/settings"];
 
 function MainLayout({ uid, profile }: { uid: string; profile: MainState["profile"] }) {
   const { pathname } = useLocation();
+  const toast = useToast();
   const parties = useSubscription(api.myParties(uid), [uid]);
+
+  // 알림: 켜 둔 기기면 토큰을 다시 저장하고(바뀌었을 수 있음), 앱을 보고 있을 때 온 알림은 화면 아래에 보여 준다.
+  useEffect(() => {
+    refreshPush(uid).catch(() => {});
+    return onForegroundPush(toast);
+  }, [uid, toast]);
   const [partyFilter, setPartyFilter] = useSessionState<string | null>("partyFilter", null);
   const [partySort, setPartySort] = useSessionState<PartySort>("partySort", "todo");
 

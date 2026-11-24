@@ -187,6 +187,7 @@ describe("푸시 발송", () => {
     await db.doc("users/a/devices/token-a2").set({ platform: "android" });
     await db.doc("users/b/devices/token-b").set({ platform: "android" });
     const { sender, messages } = fakeSender(["token-a2"]);
+    process.env.GCLOUD_PROJECT = PROJECT;
 
     const sent = await sendPushes(
       db,
@@ -203,6 +204,8 @@ describe("푸시 발송", () => {
       tokens: ["token-a1", "token-a2", "token-b"],
       notification: { title: "스우팟", body: "일정이 확정됐습니다" },
       data: { partyId: "p1" },
+      // 웹앱 토큰은 알림을 누르면 그 파티 화면을 연다.
+      webpush: { fcmOptions: { link: `https://${PROJECT}.web.app/parties/p1` } },
     });
     expect((await db.doc("users/a/devices/token-a2").get()).exists).toBe(false);
     expect((await db.doc("users/a/devices/token-a1").get()).exists).toBe(true);

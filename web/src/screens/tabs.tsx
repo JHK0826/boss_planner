@@ -7,7 +7,8 @@ import { bossLabel, type Party, type PartyMember } from "../lib/model";
 import { statusText } from "../lib/partyStatus";
 import { DAY_MS, SLOT_MS, SLOTS_PER_DAY, dayLabel, range, rowLabel, weekStart } from "../lib/time";
 import { useNow, useSubscription } from "../lib/useSubscription";
-import { Loading, useTheme } from "../ui/common";
+import { disablePush, enablePush, pushAvailability, type PushAvailability, pushEnabled } from "../lib/push";
+import { Loading, useTheme, useToast } from "../ui/common";
 
 // ---------- 내 캐릭터 ----------
 
@@ -282,9 +283,10 @@ export function TimetableTab() {
 // ---------- 설정 ----------
 
 export function SettingsTab() {
-  const { profile } = useMain();
+  const { uid, profile } = useMain();
   const theme = useTheme();
   const navigate = useNavigate();
+  const [signingOut, setSigningOut] = useState(false);
   return (
     <div className="page with-tabs">
       <h1>설정</h1>
@@ -306,13 +308,76 @@ export function SettingsTab() {
           휴대폰 설정 따르기
         </button>
       )}
+      <PushSetting uid={uid} />
       <button className="btn-outline full" onClick={() => navigate("/settings/api-key")}>
         API Key 다시 등록
       </button>
-      <button className="btn-outline full" onClick={() => api.signOut()}>
+      <button
+        className="btn-outline full"
+        disabled={signingOut}
+        onClick={async () => {
+          setSigningOut(true);
+          // 로그아웃한 기기로 알림이 가지 않게 토큰부터 지운다.
+          await disablePush(uid).catch(() => {});
+          await api.signOut();
+        }}
+      >
         로그아웃
       </button>
       <p className="small muted">버전 {__APP_VERSION__} (웹)</p>
     </div>
+  );
+}
+
+/** 알림 켜기·끄기. 아이폰은 홈 화면에 추가한 앱에서만 켤 수 있다. */
+function PushSetting({ uid }: { uid: string }) {
+  const toast = useToast();
+  const [availability, setAvailability] = useState<PushAvailability | null>(null);
+  const [enabled, setEnabled] = useState(pushEnabled);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    pushAvailability().then(setAvailability, () => setAvailability("unsupported"));
+  }, []);
+
+  async function toggle() {
+    setBusy(true);
+    try {
+      if (enabled) {
+        await disablePush(uid);
+        setEnabled(false);
+        toast("이 기기의 알림을 껐습니다");
+      } else {
+        await enablePush(uid);
+        setEnabled(true);
+        toast("이 기기에서 알림을 받습니다");
+      }
+    } catch (error) {
+      toast(api.userMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const note: Record<PushAvailability, string> = {
+    available: enabled ? "일정이 열리거나 확정되면 이 기기로 알려 드립니다." : "일정 시작, 추천, 확정, 정산 소식을 이 기기로 받으려면 켜 주세요.",
+    "needs-install": "아이폰은 Safari 공유 버튼 → '홈 화면에 추가'로 설치한 앱에서 열어야 알림을 켤 수 있습니다 (iOS 16.4 이상).",
+    unsupported: "이 브라우저에서는 알림을 받을 수 없습니다.",
+    "not-configured": "알림 설정이 아직 준비되지 않았습니다.",
+  };
+  return (
+    <label className="row">
+      <span className="grow">
+        <h3>알림</h3>
+        <span className="small muted">{availability ? note[availability] : "확인하는 중…"}</span>
+      </span>
+      <input
+        type="checkbox"
+        className="switch"
+        aria-label="알림"
+        checked={enabled && availability === "available"}
+        disabled={availability !== "available" || busy}
+        onChange={toggle}
+      />
+    </label>
   );
 }
