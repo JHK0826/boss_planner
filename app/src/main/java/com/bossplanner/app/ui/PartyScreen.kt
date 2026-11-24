@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +17,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -27,6 +43,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -34,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -49,12 +68,16 @@ import com.bossplanner.app.data.Confirmed
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
+import com.bossplanner.app.data.PartySnapshot
+import com.bossplanner.app.data.PartyStatuses
+import com.bossplanner.app.data.TabTodos
 import com.bossplanner.app.data.Schedule
 import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.Unavailable
 import com.bossplanner.app.data.Vote
 import com.bossplanner.app.data.userMessage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -64,7 +87,6 @@ private data class Loaded<T>(val value: T)
 
 private sealed interface Confirm {
     data object StartNow : Confirm
-    data object Settings : Confirm
     data object Leave : Confirm
     data class Delegate(val member: PartyMember) : Confirm
     data class Lock(val index: Int, val label: String) : Confirm
@@ -72,12 +94,26 @@ private sealed interface Confirm {
     data object RequestChange : Confirm
 }
 
+/** 파티 화면 하단 탭 */
+enum class PartyTab(val label: String, val icon: ImageVector) {
+    Info("파티", Icons.Filled.Person),
+    Schedule("투표", Icons.Filled.CheckCircle),
+    Settlement("정산", Icons.Filled.ShoppingCart),
+    Settings("설정", Icons.Filled.Settings),
+}
+
+/**
+ * 파티 화면: 하단 탭 4개(파티 / 투표 / 정산 / 설정).
+ * 파티·최근 일정·불가 시간·투표는 여기서 한 번 구독해 탭에 넘긴다. 정산 채팅·분배금은 정산 탭을 열었을 때만 구독한다.
+ *
+ * @param initialTab 처음 보여 줄 탭. null이면 할 일이 있는 탭(투표 → 정산)을, 없으면 파티 탭을 연다.
+ */
 @Composable
 fun PartyScreen(
     uid: String,
     partyId: String,
+    initialTab: PartyTab?,
     onEditUnavailable: (UnavailableTarget) -> Unit,
-    onOpenSettlement: (periodId: String) -> Unit,
     onBack: () -> Unit,
     parties: PartyRepository = remember { PartyRepository() },
 ) {
@@ -85,23 +121,30 @@ fun PartyScreen(
         .collectAsStateWithLifecycle(initialValue = null)
     val scheduleState by remember(partyId) { parties.recentSchedules(partyId).map { Loaded(it) } }
         .collectAsStateWithLifecycle(initialValue = null)
-    val schedule = scheduleState?.value?.firstOrNull()
-    // 다음 주기가 시작된 뒤에도 끝나지 않은 지난 주기 정산
-    val pastSettlements = scheduleState?.value.orEmpty().drop(1).filter { it.settlementOpen }
-    val unavailable by remember(partyId, schedule?.id) {
-        schedule?.let { parties.unavailable(partyId, it.id) } ?: flowOf(emptyMap())
-    }.collectAsStateWithLifecycle(emptyMap())
-    val votes by remember(partyId, schedule?.id) {
-        schedule?.let { parties.votes(partyId, it.id) } ?: flowOf(emptyMap())
-    }.collectAsStateWithLifecycle(emptyMap())
+    val schedules = scheduleState?.value
+    val schedule = schedules?.firstOrNull()
+    val unavailableState by remember(partyId, schedule?.id) {
+        (schedule?.let { parties.unavailable(partyId, it.id) } ?: flowOf(emptyMap())).map { Loaded(it) }
+    }.collectAsStateWithLifecycle(null)
+    val votesState by remember(partyId, schedule?.id) {
+        (schedule?.let { parties.votes(partyId, it.id) } ?: flowOf(emptyMap())).map { Loaded(it) }
+    }.collectAsStateWithLifecycle(null)
+    // 탭 배지용: 정산이 진행 중인 주기의 분배금 상태만 지켜본다.
+    val settlementIds = schedules.orEmpty().filter { it.settlementOpen && it.settlement != null }.map { it.id }
+    val settlementsState by remember(partyId, settlementIds) {
+        val flow = if (settlementIds.isEmpty()) {
+            flowOf(emptyMap())
+        } else {
+            combine(settlementIds.map { id -> parties.settlementEntries(partyId, id).map { id to it } }) { it.toMap() }
+        }
+        flow.map { Loaded(it) }
+    }.collectAsStateWithLifecycle(null)
+    val unavailable = unavailableState?.value.orEmpty()
+    val votes = votesState?.value.orEmpty()
 
     var busy by remember { mutableStateOf(false) }
     val showMessage = LocalShowMessage.current
-    val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     var confirm by remember { mutableStateOf<Confirm?>(null) }
-    // 시간표를 보고 있는 파티원
-    var viewingMember by remember { mutableStateOf<PartyMember?>(null) }
     // 파티원 캐릭터 이미지 (uid → 주소)
     var memberImages by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val memberCharacters = partyState?.value?.members?.values?.map { it.uid to it.characterId }
@@ -118,6 +161,32 @@ fun PartyScreen(
     LaunchedEffect(loadedParty) {
         if (loadedParty != null && loadedParty.value == null) onBack()
     }
+    // 화면 표시용 시각. 마감·권한 검사는 서버가 서버 시각으로 한다.
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000)
+            value = System.currentTimeMillis()
+        }
+    }
+
+    // 탭 배지: 파티 목록과 같은 할 일 계산을 쓰고, 정산 할 일과 나머지를 나눈다. 다 읽기 전에는 계산하지 않는다.
+    val loaded = schedules != null && unavailableState != null && votesState != null && settlementsState != null
+    val todos = if (party != null && loaded) {
+        TabTodos.of(PartyStatuses.of(uid, party, PartySnapshot(schedules!!, unavailable, votes, settlementsState!!.value), now))
+    } else {
+        null
+    }
+    var tab by rememberSaveable(partyId) { mutableStateOf(initialTab) }
+    LaunchedEffect(todos) {
+        if (tab == null && todos != null) {
+            tab = when {
+                todos.schedule -> PartyTab.Schedule
+                todos.settlement -> PartyTab.Settlement
+                else -> PartyTab.Info
+            }
+        }
+    }
+
     if (party == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
@@ -127,162 +196,75 @@ fun PartyScreen(
     fun run(success: String?, action: suspend () -> Unit) =
         scope.runAction(showMessage, { busy = it }, success, { it.userMessage() }, action)
 
-    val isLeader = party.leaderUid == uid
-    val inputOpen = schedule?.acceptsInput == true
-    // 화면 표시용 시각. 마감·권한 검사는 서버가 서버 시각으로 한다.
-    val now by produceState(System.currentTimeMillis()) {
-        while (true) {
-            delay(30_000)
-            value = System.currentTimeMillis()
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp)) {
+            TextButton(onClick = onBack, enabled = !busy) { Text("← 파티 목록") }
+            Text(party.name, style = MaterialTheme.typography.headlineSmall)
         }
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        TextButton(onClick = onBack, enabled = !busy) { Text("← 파티 목록") }
-        Text(party.name, style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "${party.bossLabel}\n${if (party.isWeekly) "주간" else "월간"} · ${durationLabel(party.durationMinutes)}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("초대 코드", style = MaterialTheme.typography.labelMedium)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        party.inviteCode,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = {
-                        clipboard.setText(AnnotatedString(party.inviteCode))
-                        showMessage.show("초대 코드를 복사했습니다")
-                    }) { Text("복사") }
-                    TextButton(onClick = { shareInvite(context, party) }) { Text("공유") }
-                }
-                Text(
-                    if (party.scheduleStarted) {
-                        "가입·탈퇴·위임은 ${if (party.isWeekly) "목요일" else "매월 1일"}에, 일정이 확정되기 전에만 할 수 있습니다."
-                    } else {
-                        "첫 일정을 시작하기 전까지는 언제든 가입할 수 있습니다."
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (tab) {
+                null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                PartyTab.Info -> PartyInfoTab(uid, party, schedule, unavailable, votes, memberImages, now)
+                PartyTab.Schedule -> ScheduleTab(
+                    party = party,
+                    schedule = schedule,
+                    loading = scheduleState == null,
+                    unavailable = unavailable,
+                    votes = votes,
+                    uid = uid,
+                    now = now,
+                    busy = busy,
+                    onVote = { agreed, round ->
+                        run(if (agreed.isEmpty()) "모두 안 됨으로 투표했습니다" else "투표했습니다") {
+                            parties.setVote(partyId, schedule!!.id, uid, agreed, round)
+                        }
                     },
-                    style = MaterialTheme.typography.bodySmall,
+                    onAsk = { confirm = it },
+                    onRespondToChange = { approve ->
+                        run(if (approve) "변경 요청을 승인했습니다. 다시 조율합니다" else "변경 요청을 거절했습니다") {
+                            parties.respondToChange(partyId, schedule!!.id, approve)
+                        }
+                    },
+                    onEditUnavailable = onEditUnavailable,
+                )
+                PartyTab.Settlement -> SettlementTab(uid, party, schedules.orEmpty(), loading = scheduleState == null, parties = parties)
+                PartyTab.Settings -> PartySettingsTab(
+                    uid = uid,
+                    party = party,
+                    schedule = schedule,
+                    busy = busy,
+                    onSave = { settings ->
+                        run("추천 설정을 저장했습니다") {
+                            parties.updatePartyPreferences(partyId, settings.preferredWindow, settings.minLeadMinutes)
+                        }
+                    },
+                    onAsk = { confirm = it },
                 )
             }
         }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "추천 설정 · " + recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f),
-            )
-            if (isLeader) TextButton(enabled = !busy, onClick = { confirm = Confirm.Settings }) { Text("바꾸기") }
-        }
-
-        Text("파티원 ${party.memberUids.size}명", style = MaterialTheme.typography.titleMedium)
-        party.memberUids.forEach { memberUid ->
-            val member = party.members[memberUid] ?: return@forEach
-            MemberRow(
-                member = member,
-                imageUrl = memberImages[memberUid],
-                isLeader = memberUid == party.leaderUid,
-                isMe = memberUid == uid,
-                status = memberStatus(schedule, unavailable[memberUid], votes[memberUid]),
-                onClick = { viewingMember = member },
-                onDelegate = if (isLeader && memberUid != uid && !busy) ({ confirm = Confirm.Delegate(member) }) else null,
-            )
-        }
-
-        Text("이번 주기 일정", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
-        ScheduleSection(
-            party = party,
-            schedule = schedule,
-            loading = scheduleState == null,
-            myUnavailable = unavailable[uid],
-            submittedCount = party.memberUids.count { unavailable[it]?.submitted == true },
-            votes = votes,
-            myVote = votes[uid],
-            isLeader = isLeader,
-            uid = uid,
-            now = now,
-            busy = busy,
-            onVote = { agreed, round ->
-                run(if (agreed.isEmpty()) "모두 안 됨으로 투표했습니다" else "투표했습니다") {
-                    parties.setVote(partyId, schedule!!.id, uid, agreed, round)
+        // 화면 가장자리 여백은 MainActivity가 이미 주고 있어서 여기서는 더하지 않는다.
+        NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0)) {
+            PartyTab.entries.forEach { item ->
+                val dot = when (item) {
+                    PartyTab.Schedule -> todos?.schedule == true
+                    PartyTab.Settlement -> todos?.settlement == true
+                    else -> false
                 }
-            },
-            onAsk = { confirm = it },
-            onRespondToChange = { approve ->
-                run(if (approve) "변경 요청을 승인했습니다. 다시 조율합니다" else "변경 요청을 거절했습니다") {
-                    parties.respondToChange(partyId, schedule!!.id, approve)
-                }
-            },
-        )
-        // 이번 주기 일정이 아직 없으면 파티장이 바로 열 수 있다.
-        val noCurrentSchedule = scheduleState != null && (schedule == null || schedule.periodEndMs <= now)
-        if (isLeader && noCurrentSchedule) {
-            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { confirm = Confirm.StartNow }) {
-                Text("이번 주기 지금 시작")
-            }
-            Text(
-                "파티원을 다 모은 뒤에 눌러 주세요. 시작하면 남은 기간 안에서 바로 일정을 조율합니다.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        if (inputOpen && schedule != null) {
-            OutlinedButton(
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    onEditUnavailable(
-                        UnavailableTarget(
-                            periodId = schedule.id,
-                            periodStartMs = schedule.periodStartMs,
-                            periodEndMs = schedule.periodEndMs,
-                            hasCandidates = schedule.candidates.isNotEmpty(),
-                        ),
-                    )
-                },
-            ) {
-                Text(if (unavailable[uid]?.submitted == true) "불가 시간 수정" else "불가 시간 입력")
-            }
-        }
-
-        if (schedule?.state == "SETTLED") {
-            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onOpenSettlement(schedule.id) }) {
-                Text(
-                    when {
-                        schedule.settlement == null -> "분배금 등록·정산 채팅"
-                        schedule.settlement.completed -> "정산 완료 · 내역 보기"
-                        else -> "분배금 정산 진행 중"
+                NavigationBarItem(
+                    selected = item == tab,
+                    onClick = { tab = item },
+                    icon = {
+                        // 내가 할 일이 있는 탭에는 점을 붙인다.
+                        if (dot) {
+                            BadgedBox(badge = { Badge() }) { Icon(item.icon, contentDescription = null) }
+                        } else {
+                            Icon(item.icon, contentDescription = null)
+                        }
                     },
+                    label = { Text(item.label) },
                 )
             }
         }
-        pastSettlements.forEach { past ->
-            OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onOpenSettlement(past.id) }) {
-                Text("지난 주기 정산 (${past.confirmed?.let { TimeSlots.dateTime(it.startMs) } ?: past.id})")
-            }
-        }
-
-
-        TextButton(onClick = { confirm = Confirm.Leave }, enabled = !busy) { Text("파티 탈퇴") }
-    }
-
-    viewingMember?.let { member ->
-        MemberTimetableDialog(
-            member = member,
-            // 끝난 주기의 일정은 "이번 주기"로 보지 않는다.
-            schedule = schedule?.takeIf { it.periodEndMs > now },
-            entry = unavailable[member.uid],
-            now = now,
-            onDismiss = { viewingMember = null },
-        )
     }
 
     when (val current = confirm) {
@@ -304,32 +286,6 @@ fun PartyScreen(
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
         )
-        Confirm.Settings -> {
-            var draft by remember { mutableStateOf(RecommendSettings(party.preferredWindow, party.minLeadMinutes)) }
-            AlertDialog(
-                onDismissRequest = { confirm = null },
-                title = { Text("추천 설정") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RecommendSettingsEditor(draft, enabled = true) { draft = it }
-                        if (schedule?.acceptsInput == true && schedule.candidates.isNotEmpty()) {
-                            Text(
-                                "지금 투표 중입니다. 설정을 바꾸면 추천 시간을 다시 계산하고 투표도 다시 합니다.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        confirm = null
-                        run("추천 설정을 저장했습니다") { parties.updatePartyPreferences(partyId, draft.preferredWindow, draft.minLeadMinutes) }
-                    }) { Text("저장") }
-                },
-                dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
-            )
-        }
         is Confirm.Lock -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("일정 확정") },
@@ -406,7 +362,7 @@ fun PartyScreen(
         is Confirm.Delegate -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("파티장 위임") },
-            text = { Text("${current.member.label()}에게 파티장을 넘길까요?") },
+            text = { Text("${current.member.label()}에게 파티장을 넘길까요? 넘긴 뒤에는 새 파티장만 되돌릴 수 있습니다.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirm = null
@@ -415,6 +371,271 @@ fun PartyScreen(
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
         )
+    }
+}
+
+/** 탭 안의 내용: 세로로 넘기고 가장자리 여백을 준다. */
+@Composable
+private fun TabColumn(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+/** 파티 탭: 파티 정보, 초대 코드, 파티원 */
+@Composable
+private fun PartyInfoTab(
+    uid: String,
+    party: Party,
+    schedule: Schedule?,
+    unavailable: Map<String, Unavailable>,
+    votes: Map<String, Vote>,
+    memberImages: Map<String, String>,
+    now: Long,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val showMessage = LocalShowMessage.current
+    // 시간표를 보고 있는 파티원
+    var viewingMember by remember { mutableStateOf<PartyMember?>(null) }
+
+    TabColumn {
+        Text(
+            "${party.bossLabel}\n${if (party.isWeekly) "주간" else "월간"} · ${durationLabel(party.durationMinutes)}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("초대 코드", style = MaterialTheme.typography.labelMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        party.inviteCode,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(party.inviteCode))
+                        showMessage.show("초대 코드를 복사했습니다")
+                    }) { Text("복사") }
+                    TextButton(onClick = { shareInvite(context, party) }) { Text("공유") }
+                }
+                Text(
+                    if (party.scheduleStarted) {
+                        "가입·탈퇴·위임은 ${if (party.isWeekly) "목요일" else "매월 1일"}에, 일정이 확정되기 전에만 할 수 있습니다."
+                    } else {
+                        "첫 일정을 시작하기 전까지는 언제든 가입할 수 있습니다."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        Text("파티원 ${party.memberUids.size}명", style = MaterialTheme.typography.titleMedium)
+        party.memberUids.forEach { memberUid ->
+            val member = party.members[memberUid] ?: return@forEach
+            MemberRow(
+                member = member,
+                imageUrl = memberImages[memberUid],
+                isLeader = memberUid == party.leaderUid,
+                isMe = memberUid == uid,
+                status = memberStatus(schedule, unavailable[memberUid], votes[memberUid]),
+                onViewTimetable = { viewingMember = member },
+            )
+        }
+    }
+
+    viewingMember?.let { member ->
+        MemberTimetableDialog(
+            member = member,
+            // 끝난 주기의 일정은 "이번 주기"로 보지 않는다.
+            schedule = schedule?.takeIf { it.periodEndMs > now },
+            entry = unavailable[member.uid],
+            now = now,
+            onDismiss = { viewingMember = null },
+        )
+    }
+}
+
+/** 투표 탭: 이번 주기 일정 (불가 시간 입력, 추천·투표, 확정, 변경 요청, 결과 기록) */
+@Composable
+private fun ScheduleTab(
+    party: Party,
+    schedule: Schedule?,
+    loading: Boolean,
+    unavailable: Map<String, Unavailable>,
+    votes: Map<String, Vote>,
+    uid: String,
+    now: Long,
+    busy: Boolean,
+    onVote: (agreed: List<Int>, round: Int) -> Unit,
+    onAsk: (Confirm) -> Unit,
+    onRespondToChange: (approve: Boolean) -> Unit,
+    onEditUnavailable: (UnavailableTarget) -> Unit,
+) {
+    val isLeader = party.leaderUid == uid
+    TabColumn {
+        Text("이번 주기 일정", style = MaterialTheme.typography.titleMedium)
+        ScheduleSection(
+            party = party,
+            schedule = schedule,
+            loading = loading,
+            myUnavailable = unavailable[uid],
+            submittedCount = party.memberUids.count { unavailable[it]?.submitted == true },
+            votes = votes,
+            myVote = votes[uid],
+            isLeader = isLeader,
+            uid = uid,
+            now = now,
+            busy = busy,
+            onVote = onVote,
+            onAsk = onAsk,
+            onRespondToChange = onRespondToChange,
+        )
+        // 이번 주기 일정이 아직 없으면 파티장이 바로 열 수 있다.
+        val noCurrentSchedule = !loading && (schedule == null || schedule.periodEndMs <= now)
+        if (isLeader && noCurrentSchedule) {
+            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.StartNow) }) {
+                Text("이번 주기 지금 시작")
+            }
+            Text(
+                "파티원을 다 모은 뒤에 눌러 주세요. 시작하면 남은 기간 안에서 바로 일정을 조율합니다.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (schedule != null && schedule.acceptsInput) {
+            OutlinedButton(
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    onEditUnavailable(
+                        UnavailableTarget(
+                            periodId = schedule.id,
+                            periodStartMs = schedule.periodStartMs,
+                            periodEndMs = schedule.periodEndMs,
+                            hasCandidates = schedule.candidates.isNotEmpty(),
+                        ),
+                    )
+                },
+            ) {
+                Text(if (unavailable[uid]?.submitted == true) "불가 시간 수정" else "불가 시간 입력")
+            }
+        }
+    }
+}
+
+/** 정산 탭: 정산할 주기가 여러 개면(이번 주기 + 끝나지 않은 지난 주기) 위에서 고른다. */
+@Composable
+private fun SettlementTab(uid: String, party: Party, schedules: List<Schedule>, loading: Boolean, parties: PartyRepository) {
+    // 클리어한 이번 주기(정산이 끝났어도) + 정산이 끝나지 않은 지난 주기
+    val periods = schedules.filterIndexed { index, s -> if (index == 0) s.state == "SETTLED" else s.settlementOpen }
+    var chosen by rememberSaveable(party.id) { mutableStateOf<String?>(null) }
+    val selected = chosen?.takeIf { id -> periods.any { it.id == id } } ?: periods.firstOrNull()?.id
+
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            selected == null -> Text(
+                "클리어한 일정이 생기면 여기서 분배금을 정산합니다.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+            else -> {
+                if (periods.size > 1) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        periods.forEach { period ->
+                            FilterChip(
+                                selected = period.id == selected,
+                                onClick = { chosen = period.id },
+                                label = { Text(period.confirmed?.let { "${TimeSlots.dateTime(it.startMs)} 레이드" } ?: period.id) },
+                            )
+                        }
+                    }
+                }
+                key(selected) {
+                    SettlementContent(uid = uid, party = party, periodId = selected, modifier = Modifier.weight(1f), parties = parties)
+                }
+            }
+        }
+    }
+}
+
+/** 파티 설정 탭: 추천 설정, 파티장 위임, 파티 탈퇴 */
+@Composable
+private fun PartySettingsTab(
+    uid: String,
+    party: Party,
+    schedule: Schedule?,
+    busy: Boolean,
+    onSave: (RecommendSettings) -> Unit,
+    onAsk: (Confirm) -> Unit,
+) {
+    val isLeader = party.leaderUid == uid
+    val saved = RecommendSettings(party.preferredWindow, party.minLeadMinutes)
+    // 다른 기기에서 바뀌거나 저장되면 편집 중인 값도 맞춘다.
+    var draft by remember(saved) { mutableStateOf(saved) }
+    val others = party.memberUids.filter { it != uid }.mapNotNull { party.members[it] }
+    var delegateTo by remember(party.leaderUid) { mutableStateOf<PartyMember?>(null) }
+
+    TabColumn {
+        Text("추천 설정", style = MaterialTheme.typography.titleMedium)
+        if (isLeader) {
+            RecommendSettingsEditor(draft, enabled = !busy) { draft = it }
+            if (schedule?.acceptsInput == true && schedule.candidates.isNotEmpty()) {
+                Text(
+                    "지금 투표 중입니다. 설정을 바꾸면 추천 시간을 다시 계산하고 투표도 다시 합니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Button(enabled = !busy && draft != saved, modifier = Modifier.fillMaxWidth(), onClick = { onSave(draft) }) { Text("저장") }
+        } else {
+            Text(recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes), style = MaterialTheme.typography.bodyMedium)
+            Text("추천 설정은 파티장만 바꿀 수 있습니다.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        if (isLeader) {
+            HorizontalDivider()
+            Text("파티장 위임", style = MaterialTheme.typography.titleMedium)
+            if (others.isEmpty()) {
+                Text("파티장을 넘길 파티원이 없습니다.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                others.forEach { member ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) { delegateTo = member },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = delegateTo?.uid == member.uid, onClick = null)
+                        Text("${member.label()} (${member.characterName})", modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+                OutlinedButton(
+                    enabled = !busy && delegateTo != null,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { delegateTo?.let { onAsk(Confirm.Delegate(it)) } },
+                ) { Text("위임") }
+            }
+        }
+
+        HorizontalDivider()
+        Text("파티 탈퇴", style = MaterialTheme.typography.titleMedium)
+        Text(
+            if (party.scheduleStarted) {
+                "일정을 시작한 뒤에는 가입·탈퇴·위임을 ${if (party.isWeekly) "목요일" else "매월 1일"}에, 일정이 확정되기 전에만 할 수 있습니다."
+            } else {
+                "첫 일정을 시작하기 전까지는 언제든 탈퇴할 수 있습니다."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.Leave) }) {
+            Text("파티 탈퇴", color = MaterialTheme.colorScheme.error)
+        }
     }
 }
 
@@ -436,11 +657,9 @@ private fun MemberRow(
     isLeader: Boolean,
     isMe: Boolean,
     status: String?,
-    onClick: () -> Unit,
-    onDelegate: (() -> Unit)?,
+    onViewTimetable: () -> Unit,
 ) {
-    // 누르면 그 파티원의 이번 주기 불가 시간을 본다.
-    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // 이미지가 없어도 자리를 비워 두어 줄이 가지런하게 한다.
         AsyncImage(model = imageUrl, contentDescription = null, modifier = Modifier.size(56.dp))
         Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
@@ -449,16 +668,17 @@ private fun MemberRow(
                 style = MaterialTheme.typography.titleSmall,
             )
             Text("${member.characterName} · Lv.${member.level} ${member.job}", style = MaterialTheme.typography.bodySmall)
+            if (status != null) {
+                Text(
+                    status,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (status == "미입력" || status == "투표 전") MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.primary,
+                )
+            }
         }
-        if (status != null) {
-            Text(
-                status,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (status == "미입력" || status == "투표 전") MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.primary,
-            )
-        }
-        if (onDelegate != null) TextButton(onClick = onDelegate) { Text("위임") }
+        // 그 파티원의 이번 주기 불가 시간을 본다.
+        TextButton(onClick = onViewTimetable) { Text("시간표 보기") }
     }
 }
 
@@ -497,11 +717,14 @@ private fun ScheduleSection(
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
-            schedule.state == "SETTLED" -> Text(
-                "클리어 완료" + (confirmed?.let { " · ${TimeSlots.range(it.startMs, it.endMs)}" } ?: ""),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            schedule.state == "SETTLED" -> {
+                Text(
+                    "클리어 완료" + (confirmed?.let { " · ${TimeSlots.range(it.startMs, it.endMs)}" } ?: ""),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text("분배금은 정산 탭에서 정산합니다.", style = MaterialTheme.typography.bodySmall)
+            }
             schedule.state == "EXPIRED" -> Text(
                 when (schedule.expiredReason) {
                     "NOT_CLEARED" -> "미클리어로 끝났고 다시 잡을 기간이 남지 않았습니다."

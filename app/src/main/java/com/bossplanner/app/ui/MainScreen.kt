@@ -61,9 +61,9 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 private sealed interface Screen {
     data object CreateParty : Screen
     data object JoinParty : Screen
-    data class PartyDetail(val partyId: String) : Screen
+    /** @param tab 처음 보여 줄 탭. null이면 할 일이 있는 탭을 연다. */
+    data class PartyDetail(val partyId: String, val tab: PartyTab? = null) : Screen
     data class EditUnavailable(val partyId: String, val target: UnavailableTarget) : Screen
-    data class SettlementDetail(val partyId: String, val periodId: String) : Screen
     data object Routine : Screen
 }
 
@@ -212,25 +212,19 @@ fun MainScreen(
         is Screen.PartyDetail -> PartyScreen(
             uid = uid,
             partyId = current.partyId,
+            initialTab = current.tab,
             onEditUnavailable = { screen = Screen.EditUnavailable(current.partyId, it) },
-            onOpenSettlement = { screen = Screen.SettlementDetail(current.partyId, it) },
             onBack = { screen = null },
             parties = partyRepository,
         )
         Screen.Routine -> RoutineScreen(uid = uid, onDone = { screen = null })
-        is Screen.SettlementDetail -> SettlementScreen(
-            uid = uid,
-            partyId = current.partyId,
-            periodId = current.periodId,
-            onBack = { screen = Screen.PartyDetail(current.partyId) },
-            parties = partyRepository,
-        )
         is Screen.EditUnavailable -> UnavailableScreen(
             uid = uid,
             partyId = current.partyId,
             target = current.target,
             otherParties = parties.filter { it.id != current.partyId },
-            onDone = { screen = Screen.PartyDetail(current.partyId) },
+            // 끝나면 파티 화면의 투표 탭으로 돌아간다.
+            onDone = { screen = Screen.PartyDetail(current.partyId, PartyTab.Schedule) },
             parties = partyRepository,
         )
     }

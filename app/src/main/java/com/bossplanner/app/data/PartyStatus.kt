@@ -16,9 +16,31 @@ data class PartySnapshot(
  * 파티 목록에 붙이는 상태.
  * @param needsAction 내가 해야 할 일이면 true, 다른 사람을 기다리거나 알림용이면 false
  * @param moreActions label 말고도 해야 할 일이 몇 건 더 있는가
+ * @param todos 해야 할 일 전부 (급한 순). 파티 화면의 탭 배지에 쓴다
  */
-data class PartyStatus(val label: String, val needsAction: Boolean, val moreActions: Int = 0) {
+data class PartyStatus(
+    val label: String,
+    val needsAction: Boolean,
+    val moreActions: Int = 0,
+    val todos: List<String> = emptyList(),
+) {
     val text: String get() = if (moreActions > 0) "$label 외 ${moreActions}건" else label
+}
+
+/** 파티 화면 하단 탭별로 내가 할 일이 있는가 */
+data class TabTodos(val schedule: Boolean, val settlement: Boolean) {
+    companion object {
+        /** 정산 탭에서 하는 일. 나머지 할 일(불가 시간 입력, 투표, 일정 확정, 결과 기록, 변경 요청 처리)은 투표 탭에서 한다. */
+        val SETTLEMENT_TODOS = setOf("정산금 수령 확인", "정산금 지급")
+
+        fun of(status: PartyStatus?): TabTodos {
+            val todos = status?.todos.orEmpty()
+            return TabTodos(
+                schedule = todos.any { it !in SETTLEMENT_TODOS },
+                settlement = todos.any { it in SETTLEMENT_TODOS },
+            )
+        }
+    }
 }
 
 object PartyStatuses {
@@ -91,7 +113,7 @@ object PartyStatuses {
         todos += settlementTodos
 
         return if (todos.isNotEmpty()) {
-            PartyStatus(todos.first(), needsAction = true, moreActions = todos.size - 1)
+            PartyStatus(todos.first(), needsAction = true, moreActions = todos.size - 1, todos = todos.toList())
         } else {
             PartyStatus(info, needsAction = false)
         }
