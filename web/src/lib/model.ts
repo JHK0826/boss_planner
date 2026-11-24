@@ -161,6 +161,35 @@ export interface BossCatalog {
   maxDurationMinutes: number;
 }
 
+/** 게임 스케줄러에 등록한 보스 하나 (서버 domain/earnings.ts의 PricedBoss) */
+export interface SchedulerBoss {
+  name: string;
+  /** EASY | NORMAL | HARD | CHAOS | EXTREME */
+  difficulty: string;
+  cycle: "WEEKLY" | "MONTHLY";
+  cleared: boolean;
+  /** 앱에서 그 보스로 들어간 파티의 인원. 없으면 1 */
+  partySize: number;
+  /** 결정석 가격. 미등록이면 null */
+  price: number | null;
+  /** 내 몫 = 가격 ÷ 인원수 */
+  share: number;
+}
+
+export interface CharacterScheduler {
+  bosses: SchedulerBoss[];
+  fetchedAtMs: number | null;
+  /** 이번에 받지 못한 이유 (저장해 둔 값이 있으면 그 값도 함께 온다) */
+  error: string | null;
+}
+
+/** 수익 기록 한 기간 (users/{uid}/earnings/{W-yyyyMMdd | M-yyyyMM}) */
+export interface EarningsRecord {
+  id: string;
+  characters: Record<string, { crystalValue: number; crystalCount: number }>;
+  settlements: Record<string, { characterId: string | null; partyName: string; amount: number; raidAtMs: number }>;
+}
+
 const DIFFICULTY_LABELS: Record<string, string> = {
   EASY: "이지",
   NORMAL: "노멀",

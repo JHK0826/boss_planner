@@ -33,6 +33,8 @@ import type {
   BossCatalog,
   ChatMessage,
   CharacterInfo,
+  CharacterScheduler,
+  EarningsRecord,
   CharacterSummary,
   Party,
   PartyBoss,
@@ -430,6 +432,37 @@ export const registerSettlement = (partyId: string, periodId: string, saleAmount
 export const markPaid = (partyId: string, periodId: string, recipientUid: string) => call("markPaid", { partyId, periodId, recipientUid });
 
 export const confirmReceived = (partyId: string, periodId: string) => call("confirmReceived", { partyId, periodId });
+
+// ---------- 보스 스케줄러·수익 ----------
+
+/** 골라 둔 캐릭터마다 게임 스케줄러에 등록한 보스. 서버가 10분 동안 저장해 두고, refresh면 1분이 지났을 때 다시 받는다. */
+export async function getSchedulerState(refresh = false): Promise<Record<string, CharacterScheduler>> {
+  const result = await call<{ characters?: Record<string, CharacterScheduler> }>("getSchedulerState", { refresh });
+  return result.characters ?? {};
+}
+
+/** 내 수익 기록 전부 (주간 W-…, 월간 M-…). 한 해에 60개 남짓이라 통째로 구독한다. */
+export const earnings = (uid: string): Subscribe<EarningsRecord[]> =>
+  listen(collection(db, "users", uid, "earnings"), [], (snapshot) =>
+    snapshot.docs.map((d) => {
+      const settlements = (d.get("settlements") ?? {}) as Record<string, Record<string, unknown>>;
+      return {
+        id: d.id,
+        characters: (d.get("characters") ?? {}) as EarningsRecord["characters"],
+        settlements: Object.fromEntries(
+          Object.entries(settlements).map(([key, s]) => [
+            key,
+            {
+              characterId: typeof s.characterId === "string" ? s.characterId : null,
+              partyName: typeof s.partyName === "string" ? s.partyName : "",
+              amount: typeof s.amount === "number" ? s.amount : 0,
+              raidAtMs: millis(s.raidAt) ?? 0,
+            },
+          ]),
+        ),
+      };
+    }),
+  );
 
 // ---------- 알림 기기 ----------
 

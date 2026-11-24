@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { CharacterInfo, Party, UserProfile } from "./lib/model";
+import type { CharacterInfo, CharacterScheduler, Party, UserProfile } from "./lib/model";
 import type { PartyStatus } from "./lib/partyStatus";
 
 export type PartySort = "todo" | "character" | "name" | "recent";
@@ -25,6 +25,13 @@ export interface MainState {
   setPartyFilter: (characterId: string | null) => void;
   partySort: PartySort;
   setPartySort: (sort: PartySort) => void;
+  /** 캐릭터별 게임 스케줄러. 아직 안 받았으면 undefined */
+  scheduler: Record<string, CharacterScheduler> | undefined;
+  schedulerLoading: boolean;
+  /** 받지 못했을 때 이유 (API Key 없음, 네트워크 등) */
+  schedulerError: string | null;
+  /** 스케줄러를 받는다. 받은 적이 있으면 refresh일 때만 다시 받는다 */
+  loadScheduler: (refresh?: boolean) => void;
 }
 
 export const MainContext = createContext<MainState | null>(null);

@@ -352,8 +352,43 @@ try {
   await shot(b, "12-settlement-done");
   step("판매자가 지급함을 누르면 받을 사람의 정산 탭에 점이 붙고, 수령을 확인하면 정산이 끝난다");
 
-  // ---------- 알림 설정 (에뮬레이터에서는 웹 푸시 키가 없음) ----------
+  // ---------- 내 캐릭터 탭: 게임 스케줄러 보스와 수익 ----------
+  // NEXON API를 부를 수 없으니 서버가 저장해 두는 스케줄러 캐시를 방금 받은 것처럼 넣는다(10분 안이면 서버가 그대로 쓴다).
+  await db.doc(`users/${uidA}/scheduler/${CHAR_A}`).set({
+    bosses: [
+      { name: "스우", difficulty: "EXTREME", cycle: "WEEKLY", cleared: true },
+      { name: "데미안", difficulty: "HARD", cycle: "WEEKLY", cleared: false },
+      { name: "검은 마법사", difficulty: "HARD", cycle: "MONTHLY", cleared: false },
+    ],
+    fetchedAt: Timestamp.now(),
+  });
   await a.getByRole("button", { name: "← 파티 목록" }).click();
+  await a.getByRole("link", { name: "내 캐릭터" }).click();
+  const card = a.locator(`[data-character="${CHAR_A}"]`);
+  // 스우·데미안은 앱의 2인 파티(스우팟)로 가므로 /2, 검은 마법사는 혼자
+  await card.getByLabel("스우 EX/2 클리어").waitFor();
+  await card.getByLabel("데미안 H/2", { exact: true }).waitFor();
+  await card.getByLabel("검은 마법사 H", { exact: true }).waitFor();
+  await card.getByText("주간 2 · 월간 1").waitFor();
+  await a.getByRole("button", { name: "새로고침" }).click();
+  await card.getByLabel("스우 EX/2 클리어").waitFor();
+  await shot(a, "13-characters");
+  step("내 캐릭터 탭: 스케줄러에 등록한 보스를 칩으로, 클리어 체크와 파티 인원수(H/2)를 함께 보여 준다");
+
+  await card.getByRole("button", { name: "수익 보기" }).click();
+  await a.getByRole("heading", { name: "루시드짱 수익" }).waitFor();
+  // 가격표를 아직 받지 않아 결정석은 0으로 계산하고 미등록 보스를 알려 준다.
+  await a.getByText("가격 미등록 (0으로 계산): 스우(EX), 데미안(H), 검은 마법사(H)").waitFor();
+  // 판매자(파티장)의 몫: 실수령 9500만 - 48,717,900 = 46,282,100
+  const thisWeek = a.getByRole("region", { name: "이번 주에 번 돈" });
+  await thisWeek.getByText("46,282,100메소").first().waitFor();
+  await thisWeek.getByText("스우팟", { exact: false }).waitFor();
+  await a.locator(".month-row", { hasText: "46,282,100메소" }).waitFor();
+  await shot(a, "14-earnings");
+  step("수익 보기: 이번 주 예상 수익, 이번 주에 번 돈(정산금 포함), 월별 지표");
+
+  // ---------- 알림 설정 (에뮬레이터에서는 웹 푸시 키가 없음) ----------
+  await a.getByRole("button", { name: "← 내 캐릭터" }).click();
   await a.getByRole("link", { name: "설정" }).click();
   await a.getByText("알림 설정이 아직 준비되지 않았습니다.").waitFor();
   assert.equal(await a.getByLabel("알림").isDisabled(), true);
