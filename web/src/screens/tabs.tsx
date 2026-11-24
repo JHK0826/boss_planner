@@ -35,6 +35,8 @@ export function CharactersTab() {
       <button className="btn-outline full" onClick={() => navigate("/characters/select")}>
         캐릭터 다시 선택
       </button>
+      {/* NEXON Open API 이용 조건: 받은 데이터를 보여 주는 화면에 출처를 적는다. */}
+      <p className="small muted">Data based on NEXON Open API</p>
     </div>
   );
 }
@@ -324,7 +326,11 @@ export function SettingsTab() {
       >
         로그아웃
       </button>
-      <p className="small muted">버전 {__APP_VERSION__} (웹)</p>
+      <p className="small muted">
+        버전 {__APP_VERSION__} (웹)
+        <br />
+        Data based on NEXON Open API
+      </p>
     </div>
   );
 }

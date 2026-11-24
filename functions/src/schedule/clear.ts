@@ -1,7 +1,6 @@
 import { Timestamp, type DocumentReference, type Firestore } from "firebase-admin/firestore";
 import type { SecretCharacter } from "../characters";
-import { toSecretCharacters } from "../characters";
-import { CHARACTER_LIST_TTL_MS } from "../config";
+import { refreshStaleCharacterInfo, refreshStaleCharacterLists } from "../characterRefresh";
 import { SLOT_MS, kstDateString } from "../domain/time";
 import { bossesOf } from "../domain/bosses";
 import { NexonClient, allBossesCompleted } from "../nexon/client";
@@ -11,7 +10,7 @@ import { resetFields, type Confirmed } from "./model";
 import { sweepSchedules } from "./sweep";
 
 export type RaidOutcome = "ignored" | "settled" | "retry" | "expired";
-type ClientFactory = (apiKey: string) => Pick<NexonClient, "getBossContents" | "listCharacters">;
+type ClientFactory = (apiKey: string) => Pick<NexonClient, "getBossContents" | "listCharacters" | "getCharacterBasic">;
 
 /** 게임 데이터가 API에 반영되기까지 기다리는 시간 */
 const API_DELAY_MS = 30 * 60 * 1000;
@@ -73,14 +72,18 @@ export async function resolveRaidResult(
  * 묶음 파티는 묶은 보스를 모두 클리어해야 클리어다.
  * 한 명이라도 클리어로 나오면 true, 확인된 사람이 모두 미클리어면 false, 아무도 확인하지 못하면 null.
  * date는 레이드 날짜로 지정한다(목요일 초기화 뒤에도 수요일 레이드를 확인하기 위함).
+ * 단 레이드 날짜가 오늘이면 date를 뺀다: 이 API는 오늘 날짜를 넣으면 거절하고(OPENAPI00004), 빼면 최신 상태를 준다.
+ * (자정 직후에 끝난 레이드를 그날 05시에 확인하는 경우)
  */
 export async function checkClearByApi(
   db: Firestore,
   party: FirebaseFirestore.DocumentData,
   confirmed: Confirmed,
   makeClient: ClientFactory,
+  nowMs: number,
 ): Promise<boolean | null> {
-  const date = kstDateString(confirmed.end.toMillis() - 1);
+  const raidDate = kstDateString(confirmed.end.toMillis() - 1);
+  const date = raidDate === kstDateString(nowMs) ? undefined : raidDate;
   let sawNotCleared = false;
   for (const uid of confirmed.memberUids) {
     const characterId = party.members?.[uid]?.characterId as string | undefined;
@@ -100,7 +103,7 @@ export async function checkClearByApi(
 }
 
 /**
- * 매일 05:00: 직접 기록이 없는 일정(VERIFYING)을 API로 확인하고, 30일 지난 캐릭터 목록을 갱신한다.
+ * 매일 05:00: 직접 기록이 없는 일정(VERIFYING)을 API로 확인하고, 오래된 캐릭터 목록·기본 정보를 다시 받는다.
  */
 export async function runDailyClearCheck(
   db: Firestore,
@@ -115,7 +118,7 @@ export async function runDailyClearCheck(
     const confirmed = doc.get("confirmed") as Confirmed;
     if (confirmed.end.toMillis() + API_DELAY_MS > nowMs) continue;
     const party = (await doc.ref.parent.parent!.get()).data();
-    const cleared = party ? await checkClearByApi(db, party, confirmed, makeClient) : null;
+    const cleared = party ? await checkClearByApi(db, party, confirmed, makeClient, nowMs) : null;
     if (cleared !== null) {
       counts[await resolveRaidResult(db, doc.ref, cleared, "API", nowMs)]++;
     } else if (nowMs > (doc.get("periodEnd") as Timestamp).toMillis() + UNVERIFIED_GRACE_MS) {
@@ -127,30 +130,6 @@ export async function runDailyClearCheck(
   }
 
   await refreshStaleCharacterLists(db, nowMs, makeClient);
+  await refreshStaleCharacterInfo(db, nowMs, makeClient);
   return counts;
-}
-
-/** 받아 온 지 30일이 지난 캐릭터 목록(ocid)을 다시 받는다. 하루 호출 한도를 아끼려고 개수를 제한한다. */
-export async function refreshStaleCharacterLists(
-  db: Firestore,
-  nowMs: number,
-  makeClient: ClientFactory,
-  limit = 30,
-): Promise<number> {
-  const stale = await db
-    .collection("secrets")
-    .where("charactersFetchedAt", "<", Timestamp.fromMillis(nowMs - CHARACTER_LIST_TTL_MS))
-    .limit(limit)
-    .get();
-  let refreshed = 0;
-  for (const doc of stale.docs) {
-    try {
-      const characters = toSecretCharacters(await makeClient(doc.get("apiKey") as string).listCharacters());
-      await doc.ref.update({ characters, charactersFetchedAt: Timestamp.fromMillis(nowMs) });
-      refreshed++;
-    } catch {
-      // 실패한 키는 다음 날 다시 시도한다.
-    }
-  }
-  return refreshed;
 }

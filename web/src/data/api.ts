@@ -109,8 +109,16 @@ export function authErrorMessage(error: unknown): string {
       return "시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.";
     case "auth/network-request-failed":
       return "네트워크에 연결할 수 없습니다.";
+    case "auth/user-disabled":
+      return "사용이 중지된 계정입니다.";
+    case "auth/operation-not-allowed":
+      return "이메일 로그인이 꺼져 있습니다. Firebase 콘솔의 Authentication에서 이메일/비밀번호 로그인을 켜 주세요.";
+    case "auth/invalid-api-key":
+    case "auth/api-key-not-valid.-please-pass-a-valid-api-key.":
+      return "웹앱 설정값(API 키)이 올바르지 않습니다. web/.env.local의 값을 확인하고 다시 배포해 주세요.";
     default:
-      return "로그인하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+      // 원인을 알 수 있도록 오류 코드를 함께 보여 준다.
+      return `로그인하지 못했습니다 (${code || (error instanceof Error ? error.message : "알 수 없는 오류")}). 잠시 후 다시 시도해 주세요.`;
   }
 }
 

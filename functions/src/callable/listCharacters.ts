@@ -1,6 +1,7 @@
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { toPublicCharacters, toSecretCharacters, type PublicCharacter, type SecretCharacter } from "../characters";
+import { syncPartyMembers } from "../characterRefresh";
 import { CHARACTER_LIST_TTL_MS, REGION } from "../config";
 import { NexonClient } from "../nexon/client";
 import { toHttpsError } from "../nexon/errors";
@@ -29,6 +30,8 @@ export const listCharacters = onCall({ region: REGION }, async (request): Promis
       throw toHttpsError(error);
     }
     await secretRef.update({ characters, charactersFetchedAt: FieldValue.serverTimestamp() });
+    // 파티에 옮겨 적은 캐릭터 정보(이름·직업·레벨)도 새 값으로 맞춘다.
+    await syncPartyMembers(getFirestore(), uid, characters);
   }
 
   return { characters: toPublicCharacters(characters) };

@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, Timestamp, type Firestore } from "firebase-admin/firestore";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { NexonBossContent } from "../../src/nexon/client";
+import { NexonApiError, type NexonBossContent, type NexonCharacterBasic } from "../../src/nexon/client";
 import { createParty, joinParty, leaveParty, startSchedule } from "../../src/party/service";
 import { approveChange, requestChange } from "../../src/schedule/change";
 import { resolveRaidResult, runDailyClearCheck } from "../../src/schedule/clear";
@@ -318,6 +318,9 @@ describe("runDailyClearCheck", () => {
     const makeClient = (apiKey: string) => ({
       getBossContents: (ocid: string, date?: string) => getBossContents(apiKey, ocid, date),
       listCharacters: async () => [],
+      getCharacterBasic: async (): Promise<NexonCharacterBasic> => {
+        throw new Error("unused");
+      },
     });
     return { makeClient, getBossContents };
   }
@@ -383,6 +386,16 @@ describe("runDailyClearCheck", () => {
     expect(await runDailyClearCheck(db, kst("2026-11-17T05:00:00"), both.makeClient)).toMatchObject({ settled: 1 });
   });
 
+  it("레이드 날짜가 오늘이면 date 없이 최신 상태로 조회한다", async () => {
+    // 일요일 00:00~01:00 레이드를 같은 날 05시에 확인한다. 이 API는 오늘 날짜를 넣으면 거절한다.
+    const partyId = await partyReadyToConfirm("a", ["b"], [["20261115", 0, 1]], "새벽팟");
+    await confirm(partyId, "a");
+    const { makeClient, getBossContents } = fakeNexon({ "key-a": boss(true) });
+
+    expect(await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), makeClient)).toMatchObject({ settled: 1 });
+    expect(getBossContents).toHaveBeenLastCalledWith("key-a", "ocid-a", undefined);
+  });
+
   it("방금 끝난 레이드는 API 반영을 기다린다", async () => {
     const partyId = await lockedParty();
     const { makeClient, getBossContents } = fakeNexon({ "key-a": boss(true) });
@@ -396,10 +409,68 @@ describe("runDailyClearCheck", () => {
     const listCharacters = vi.fn(async () => [
       { ocid: "new-ocid", character_name: "새캐릭", world_name: "루나", character_class: "히어로", character_level: 200 },
     ]);
-    await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), () => ({ getBossContents: async () => [], listCharacters }));
+    const getCharacterBasic = async (): Promise<NexonCharacterBasic> => {
+      throw new Error("unused");
+    };
+    await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), () => ({ getBossContents: async () => [], listCharacters, getCharacterBasic }));
 
     expect(listCharacters).toHaveBeenCalledTimes(1);
     const characters = (await db.doc("secrets/a").get()).get("characters");
     expect(Object.values(characters)).toMatchObject([{ ocid: "new-ocid", name: "새캐릭" }]);
+  });
+
+  it("오래된 캐릭터 정보를 다시 받고 파티에 옮겨 적은 정보도 맞춘다. 다시 받을 수 없는 캐시는 지운다", async () => {
+    const partyId = await partyReadyToConfirm("a", ["b"]);
+    const old = Timestamp.fromMillis(kst("2026-10-01T00:00:00"));
+    const cache = (name: string, level: number, fetchedAt: Timestamp) =>
+      ({ name, world: "스카니아", job: "비숍", level, imageUrl: null, guild: null, fetchedAt });
+    await db.doc("users/a/characters/char-a").set(cache("캐릭-a", 280, old));
+    await db.doc("users/b/characters/char-b").set(cache("캐릭-b", 280, Timestamp.fromMillis(kst("2026-11-14T00:00:00"))));
+    await db.doc("users/b/characters/char-gone").set(cache("지운캐릭", 200, old)); // 계정에서 빠진 캐릭터
+    await db.doc("users/c/characters/char-c").set(cache("캐릭-c", 250, old)); // 키가 만료된 사람
+
+    const getCharacterBasic = vi.fn(async (apiKey: string): Promise<NexonCharacterBasic> => {
+      if (apiKey === "key-c") throw new NexonApiError("invalid-key", 400, "OPENAPI00005");
+      // 이름 칸이 비어 오면 저장해 둔 값을 쓴다.
+      return { character_name: "", world_name: "스카니아", character_class: "비숍", character_level: 290, character_image: "https://img/a.png", character_guild_name: "길드" };
+    });
+    await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), (apiKey) => ({
+      getBossContents: async () => [],
+      listCharacters: async () => [],
+      getCharacterBasic: () => getCharacterBasic(apiKey),
+    }));
+
+    // 새로 받은 지 하루 된 b의 캐시는 건드리지 않는다.
+    expect(getCharacterBasic).toHaveBeenCalledTimes(2);
+    expect((await db.doc("users/a/characters/char-a").get()).data()).toMatchObject({
+      name: "캐릭-a",
+      level: 290,
+      imageUrl: "https://img/a.png",
+      fetchedAt: Timestamp.fromMillis(kst("2026-11-15T05:00:00")),
+    });
+    expect((await db.doc(`parties/${partyId}`).get()).get("members.a")).toMatchObject({ characterName: "캐릭-a", level: 290 });
+    expect((await db.doc(`parties/${partyId}`).get()).get("members.b")).toMatchObject({ level: 280 });
+    expect((await db.doc("users/b/characters/char-gone").get()).exists).toBe(false);
+    expect((await db.doc("users/c/characters/char-c").get()).exists).toBe(false);
+    expect((await db.doc("users/b/characters/char-b").get()).exists).toBe(true);
+  });
+
+  it("캐릭터 목록을 다시 받으면 파티에 옮겨 적은 이름·레벨도 바꾼다", async () => {
+    const partyId = await partyReadyToConfirm("a", ["b"]);
+    await db.doc("secrets/b").update({ charactersFetchedAt: Timestamp.fromMillis(kst("2026-10-01T00:00:00")) });
+    const listCharacters = vi.fn(async () => [
+      { ocid: "ocid-b", character_name: "개명한캐릭", world_name: "스카니아", character_class: "비숍", character_level: 285 },
+    ]);
+    const getCharacterBasic = async (): Promise<NexonCharacterBasic> => {
+      throw new Error("unused");
+    };
+    // 파티원 b의 characterId는 char-b라서, ocid-b의 해시 ID로 받은 목록과는 다르다. 같은 ID로 맞춰 둔다.
+    const { characterIdFromOcid } = await import("../../src/characters");
+    await db.doc(`parties/${partyId}`).update({ "members.b.characterId": characterIdFromOcid("ocid-b") });
+
+    await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), () => ({ getBossContents: async () => [], listCharacters, getCharacterBasic }));
+
+    expect(listCharacters).toHaveBeenCalledTimes(1);
+    expect((await db.doc(`parties/${partyId}`).get()).get("members.b")).toMatchObject({ characterName: "개명한캐릭", level: 285 });
   });
 });

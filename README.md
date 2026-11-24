@@ -188,18 +188,20 @@ NEXON API는 Cloud Functions에서만 호출하며, API Key와 캐릭터 식별�
 
 | 단계 | 엔드포인트 | 사용 값 | 호출 시점 |
 | --- | --- | --- | --- |
-| 2 | `GET /maplestory/v1/character/list` | 계정의 캐릭터 목록, ocid | API Key 등록 시, 30일이 지나면 갱신 |
-| 3 | `GET /maplestory/v1/character/basic` | 레벨, 직업, 이미지 | 캐릭터 선택 시 (24시간 캐시) |
+| 2 | `GET /maplestory/v1/character/list` | 계정의 캐릭터 목록, ocid | API Key 등록 시, 25일이 지나면 갱신 |
+| 3 | `GET /maplestory/v1/character/basic` | 레벨, 직업, 이미지 | 캐릭터 선택 시 (24시간 캐시), 25일이 지나면 갱신 |
 | 8-1 | `GET /maplestory/v1/scheduler/character-state` | `boss_contents[].complete_flag` | 직접 기록이 없을 때 매일 05:00 |
 
 - 호스트 `https://open.api.nexon.com`, 인증 헤더 `x-nxopen-api-key`, GET · JSON
 - 본인 계정의 캐릭터만 조회할 수 있으므로 **파티원마다 자기 API Key를 등록**합니다.
 - 게임 데이터는 평균 약 15분 뒤에 반영됩니다. 자동 확인은 레이드가 끝나고 30분이 지난 일정만 조회합니다.
-- 스케줄러 API의 `date`(KST `YYYY-MM-DD`)는 그 날짜 기준 상태를 돌려주며, **최근 약 7일**까지만 조회됩니다. 더 오래된 날짜나 미래 날짜는 `OPENAPI00004`(400)입니다.
+- 스케줄러 API의 `date`(KST `YYYY-MM-DD`)는 그 날짜 기준 상태를 돌려주며, **최근 약 7일**까지만 조회됩니다. 더 오래된 날짜, 오늘, 미래 날짜는 `OPENAPI00004`(400)입니다. 오늘 상태는 `date`를 빼고 조회합니다.
 - `boss_contents` 항목은 `content_name`(보스 이름), `difficulty`(`easy`·`normal`·`hard`·`chaos`·`extreme`), `cycle`(`bossDaily`·`bossWeekly`·`bossMonthly`), `complete_flag`(문자열 `"true"`·`"false"`)입니다. 파티의 보스 이름·난이도가 이 값과 같아야 자동 확인이 됩니다. 서버의 보스 목록은 이 응답에서 가져왔습니다(일간 보스와 시즌 보스 제외).
 - 위 세 엔드포인트의 응답 형식은 실제 API Key로 호출해 확인했습니다(2026-11).
 - 개발 단계 호출 한도는 하루 1,000건입니다. 응답을 Firestore에 캐시해 중복 호출을 줄입니다.
 - 재시도는 429, 5xx, 점검 중 코드에만 지수 백오프로 합니다.
+- **데이터 갱신 의무**: API로 받아 저장한 데이터는 30일 안에 다시 받아야 합니다. 캐릭터 목록(`secrets/{uid}`)과 캐릭터 기본 정보 캐시(`users/{uid}/characters`)는 받은 지 25일이 지나면 매일 05:00 작업이 다시 받고, 파티에 옮겨 적은 캐릭터 이름·직업·레벨도 함께 맞춥니다. 키가 만료됐거나 계정에서 빠진 캐릭터처럼 다시 받을 수 없는 캐시는 지웁니다.
+- **출처 표기**: 앱과 웹앱의 내 캐릭터 화면과 설정 화면에 "Data based on NEXON Open API"를 표시합니다.
 
 ## 핵심 규칙
 
@@ -308,7 +310,7 @@ NEXON API는 Cloud Functions에서만 호출하며, API Key와 캐릭터 식별�
 
 **자동 확인**
 
-- 기록이 없으면 매일 05:00에 스케줄러 API로 확인합니다. 이때 `date`는 **레이드 날짜**로 지정합니다(목요일 초기화 이후에도 수요일 레이드를 올바르게 확인하기 위함).
+- 기록이 없으면 매일 05:00에 스케줄러 API로 확인합니다. 이때 `date`는 **레이드 날짜**로 지정합니다(목요일 초기화 이후에도 수요일 레이드를 올바르게 확인하기 위함). 자정 직후에 끝난 레이드처럼 레이드 날짜가 그날이면 `date`를 빼고 최신 상태로 확인합니다.
 - 파티원들의 API Key로 차례로 조회해 **한 명이라도 클리어로 나오면 클리어**, 확인된 사람이 모두 미클리어면 미클리어로 봅니다.
 - 키 만료나 점검으로 아무도 확인하지 못하면 `VERIFYING`에 두고 다음 날 다시 확인하며, 주기가 끝나고 이틀이 지나도 확인하지 못하면 `EXPIRED`로 끝냅니다.
 
