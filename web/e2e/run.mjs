@@ -59,6 +59,10 @@ async function newPhone() {
 const shot = (page, name) => page.screenshot({ path: `${shots}${name}.png`, fullPage: true });
 const pages = [];
 const step = (label) => console.log(`- ${label}`);
+/** 파티 화면 하단 탭 */
+const tab = (page, name) => page.getByRole("navigation", { name: "파티 메뉴" }).getByRole("link", { name }).click();
+/** 파티 화면 하단 탭의 할 일 점 */
+const dot = (page, name) => page.getByRole("navigation", { name: "파티 메뉴" }).getByRole("link", { name }).locator(".dot");
 
 try {
   // ---------- 파티장 A: 화면으로 가입 → (API Key 대신 넣기) → 캐릭터 선택 ----------
@@ -123,14 +127,50 @@ try {
   await b.getByText("파티에 가입했습니다").waitFor();
   step("초대 코드(소문자로 입력해도 됨)로 가입한다");
 
-  // ---------- 파티장이 파티 화면에서 일정 시작 → 할 일 표시 ----------
+  // ---------- 파티 화면: 하단 탭 4개 (파티 / 투표 / 정산 / 설정) ----------
   await a.getByText("스우팟").click();
+  // 할 일이 없으면 파티 탭부터 연다.
+  await a.waitForURL(/\/parties\/[^/]+\/info$/);
   await a.getByText("파티원 2명").waitFor();
+  await a.getByText(partyDoc.get("inviteCode")).waitFor();
+  await a.getByRole("button", { name: "비숍 시간표 보기" }).click();
+  await a.getByRole("dialog", { name: "비숍님의 불가 시간" }).getByText("이번 주기 일정이 아직 시작되지 않아", { exact: false }).waitFor();
+  await a.getByRole("button", { name: "닫기" }).click();
+  await shot(a, "03-party-info");
+  step("파티 탭: 초대 코드와 파티원, 파티원마다 '시간표 보기' 버튼");
+
+  // 설정 탭: 파티장은 추천 설정을 바꾸고 위임할 수 있다. 첫 일정 전이라 위임은 언제든 된다.
+  await tab(a, "설정");
+  await a.getByRole("button", { name: "6시간" }).click();
+  await a.getByRole("button", { name: "저장" }).click();
+  await a.getByText("추천 설정을 저장했습니다").waitFor();
+  assert.equal((await partyDoc.ref.get()).get("minLeadMinutes"), 360);
+  await a.getByLabel("파티장을 넘길 파티원").selectOption({ label: "비숍 (비숍짱)" });
+  await a.getByRole("button", { name: "위임" }).click();
+  await a.getByRole("dialog", { name: "파티장 위임" }).getByRole("button", { name: "위임" }).click();
+  await a.getByText("비숍님에게 파티장을 넘겼습니다").waitFor();
+  await a.getByText("추천 설정은 파티장만 바꿀 수 있습니다.").waitFor();
+  assert.equal((await partyDoc.ref.get()).get("leaderUid"), uidB);
+  await tab(b, "설정");
+  await b.getByLabel("파티장을 넘길 파티원").selectOption({ label: "파티장 (루시드짱)" });
+  await b.getByRole("button", { name: "위임" }).click();
+  await b.getByRole("dialog", { name: "파티장 위임" }).getByRole("button", { name: "위임" }).click();
+  await b.getByText("파티장님에게 파티장을 넘겼습니다").waitFor();
+  await b.getByText("추천 설정은 파티장만 바꿀 수 있습니다.").waitFor();
+  await b.getByRole("button", { name: "파티 탈퇴" }).click();
+  await b.getByRole("dialog", { name: "파티 탈퇴" }).getByRole("button", { name: "취소" }).click();
+  assert.equal((await partyDoc.ref.get()).get("leaderUid"), uidA);
+  await shot(b, "04-party-settings");
+  step("설정 탭: 파티장은 추천 설정 저장·위임, 파티원은 읽기 전용, 탈퇴는 확인 창을 거친다");
+
+  // 투표 탭: 파티장이 일정을 연다.
+  await tab(a, "투표");
   await a.getByRole("button", { name: "이번 주기 지금 시작" }).click();
   await a.getByRole("dialog", { name: "이번 주기 지금 시작" }).getByRole("button", { name: "시작" }).click();
   await a.getByText("이번 주기 일정을 시작했습니다").waitFor();
   await a.getByText("불가 시간 제출 0/2명", { exact: false }).waitFor();
-  step("파티장이 파티 화면에서 '이번 주기 지금 시작'으로 일정을 연다");
+  await dot(a, "투표").waitFor();
+  step("투표 탭에서 '이번 주기 지금 시작'으로 일정을 열면 투표 탭에 할 일 점이 붙는다");
 
   // 실행 시각에 따라 이번 주기가 거의 끝나 있을 수 있어서, 주기를 모레부터 7일로 옮겨 추천 후보가 늘 나오게 한다.
   const scheduleRef = (await db.collection(`parties/${partyDoc.id}/schedules`).get()).docs[0].ref;
@@ -147,8 +187,8 @@ try {
   await a.getByText("할 일 · 불가 시간 입력").waitFor();
   await a.getByText("할 일이 있는 파티 1개").waitFor();
   assert.equal(await a.locator(".tabs .count").textContent(), "1");
-  await shot(a, "03-parties-todo");
-  step("일정이 열리면 할 일(불가 시간 입력)과 하단 숫자가 보인다");
+  await shot(a, "05-parties-todo");
+  step("파티 목록에 할 일(불가 시간 입력)과 하단 숫자가 보인다");
 
   await b.getByRole("button", { name: "← 파티 목록" }).click();
   await b.getByText("내 캐릭터 비숍짱 (Lv.270)").waitFor();
@@ -161,7 +201,7 @@ try {
   await a.getByRole("button", { name: "저장 (불가 180칸)" }).click();
   await a.getByText("고정 불가 시간을 저장했습니다").waitFor();
   assert.equal((await db.doc(`users/${uidA}/private/routine`).get()).get("slots").length, 180);
-  await shot(a, "04-timetable");
+  await shot(a, "06-timetable");
   step("고정 불가 시간을 한 번에 채워 저장한다 (평일 18시간 × 5일 = 180칸)");
 
   // ---------- 다크 모드 ----------
@@ -174,21 +214,26 @@ try {
   assert.equal(await a.evaluate(() => document.documentElement.dataset.theme), "dark");
   await a.getByRole("link", { name: "파티" }).click();
   await a.getByText("할 일 · 불가 시간 입력").waitFor();
-  await shot(a, "05-dark");
   step("다크 모드를 켜면 바로 바뀌고 새로고침해도 유지된다");
 
   // ---------- 불가 시간 제출 (고정 불가 시간으로 미리 채워짐) ----------
   await a.getByText("스우팟").click();
+  // 투표 탭에 할 일이 있으면 투표 탭부터 연다.
+  await a.waitForURL(/\/vote$/);
   await a.getByRole("button", { name: "불가 시간 입력" }).click();
   await a.getByText("고정 불가 시간으로 채워 두었습니다.", { exact: false }).waitFor();
-  await shot(a, "06-unavailable");
+  await shot(a, "07-unavailable");
   await a.getByRole("button", { name: "제출 (불가 180칸)" }).click();
   await a.getByText("불가 시간을 제출했습니다").waitFor();
+  // 제출하면 투표 탭으로 돌아온다.
+  await a.waitForURL(/\/vote$/);
   await a.getByText("불가 시간 제출 1/2명", { exact: false }).waitFor();
+  await dot(a, "투표").waitFor({ state: "detached" });
   assert.equal((await scheduleRef.collection("unavailable").doc(uidA).get()).get("slots").length, 180);
-  step("불가 시간 화면이 고정 불가 시간으로 채워져 있고, 그대로 제출한다");
+  step("불가 시간을 제출하면 투표 탭으로 돌아오고 할 일 점이 사라진다");
 
   await b.getByText("스우팟").click();
+  await b.waitForURL(/\/vote$/);
   await b.getByRole("button", { name: "불가 시간 입력" }).click();
   await b.getByRole("button", { name: "제출 (불가 0칸)" }).click();
   await b.getByText("불가 시간을 제출했습니다").waitFor();
@@ -200,26 +245,30 @@ try {
   await b.getByText("투표했습니다").waitFor();
   await b.getByRole("button", { name: "투표 바꾸기" }).waitFor();
 
+  await dot(a, "투표").waitFor();
   await a.getByRole("button", { name: "모두 가능" }).click();
   await a.getByRole("button", { name: "모두 해제" }).waitFor();
   await a.getByRole("button", { name: "투표하기" }).click();
   await a.getByText("전원이 동의한 시간 중 하나를 확정해 주세요.").waitFor();
-  await shot(a, "07-voting");
+  await shot(a, "08-voting");
   step("요일별로 묶인 후보에 '모두 가능'으로 투표하면 전원 동의가 된다");
 
-  await a.locator("[role=button]", { hasText: "비숍짱" }).click();
+  await tab(a, "파티");
+  await a.locator("[data-member]", { hasText: "비숍짱" }).getByText("투표 완료").waitFor();
+  await a.getByRole("button", { name: "비숍 시간표 보기" }).click();
   const timetable = a.getByRole("dialog", { name: "비숍님의 불가 시간" });
   await timetable.getByText("제출함", { exact: false }).waitFor();
-  await shot(a, "08-member-timetable");
+  await shot(a, "09-member-timetable");
   await timetable.getByRole("button", { name: "닫기" }).click();
-  step("파티원을 누르면 그 파티원의 불가 시간표가 보인다");
+  step("파티 탭에서 파티원의 진행 상태와 불가 시간표를 본다");
 
+  await tab(a, "투표");
   await a.getByRole("button", { name: "확정", exact: true }).first().click();
   await a.getByRole("dialog", { name: "일정 확정" }).getByRole("button", { name: "확정" }).click();
   await a.getByText("일정을 확정했습니다").waitFor();
   await a.getByText("확정된 시간").waitFor();
   assert.equal((await scheduleRef.get()).get("state"), "LOCKED");
-  await shot(a, "09-locked");
+  await shot(a, "10-locked");
   step("파티장이 전원 동의 시간을 확정한다");
 
   // ---------- 변경 요청 → 거절 ----------
@@ -229,10 +278,11 @@ try {
   await changeDialog.getByRole("button", { name: "요청" }).click();
   await b.getByText("변경을 요청했습니다. 파티장의 승인을 기다립니다").waitFor();
   await a.getByText("사유: 개인 사정", { exact: false }).waitFor();
+  await dot(a, "투표").waitFor();
   await a.getByRole("button", { name: "거절" }).click();
   await a.getByText("변경 요청을 거절했습니다").waitFor();
   await b.getByText("변경 요청이 거절되었습니다.").waitFor();
-  step("파티원이 변경을 요청하고 파티장이 거절한다");
+  step("파티원이 변경을 요청하면 파티장의 투표 탭에 할 일 점이 붙고, 파티장이 거절한다");
 
   // ---------- 레이드 후 클리어 기록 ----------
   // 확정 시간을 이미 지난 시간으로 옮긴다 (기록은 레이드가 시작된 뒤에만 받는다).
@@ -245,15 +295,12 @@ try {
   await a.getByRole("button", { name: "클리어", exact: true }).click();
   await a.getByRole("dialog", { name: "클리어 기록" }).getByRole("button", { name: "기록" }).click();
   await a.getByText("클리어로 기록했습니다").waitFor();
-  await a.getByText("클리어 완료", { exact: false }).waitFor();
-  await a.getByRole("button", { name: "분배금 등록·정산 채팅" }).waitFor();
+  await a.getByText("분배금은 정산 탭에서 정산합니다.").waitFor();
   assert.equal((await scheduleRef.get()).get("state"), "SETTLED");
-  await shot(a, "10-settled");
-  step("레이드가 끝나면 클리어를 기록하고 정산 버튼이 나온다");
+  step("레이드가 끝나면 클리어를 기록한다");
 
-  // ---------- 분배금 정산 ----------
-  await a.getByRole("button", { name: "분배금 등록·정산 채팅" }).click();
-  await a.getByRole("heading", { name: "분배금 정산" }).waitFor();
+  // ---------- 정산 탭 ----------
+  await tab(a, "정산");
   await a.getByLabel("경매장 판매액 (메소)").fill("100000000");
   await a.getByText("1억 메소").waitFor();
   // 실수령 9500만 ÷ (0.95 + 1명) = 48,717,948 → 100메소 단위로 내림 (서버 calc.ts와 같은 식)
@@ -262,12 +309,14 @@ try {
   await a.getByRole("button", { name: "분배금 등록" }).click();
   await a.getByText("분배금을 등록했습니다. 파티원에게 알림을 보냈습니다").waitFor();
   await a.getByText("비숍 정산금").waitFor();
+  await dot(a, "정산").waitFor();
   assert.equal((await scheduleRef.collection("settlement").doc(uidB).get()).get("amount"), 48717900);
-  step("판매액을 넣으면 정산금을 미리 계산해 보여 주고, 등록하면 서버가 같은 금액으로 저장한다");
+  step("정산 탭: 판매액으로 정산금을 미리 계산하고 등록한다. 지급할 판매자의 정산 탭에 점이 붙는다");
 
   await b.getByRole("button", { name: "← 파티 목록" }).click();
   await b.getByText("스우팟").click();
-  await b.getByRole("button", { name: "분배금 정산 진행 중" }).click();
+  await b.waitForURL(/\/info$/);
+  await tab(b, "정산");
   await b.getByText("경매장에 물건을 내 정산금 가격으로 올리고", { exact: false }).waitFor();
   await b.getByLabel("메시지").fill("경매장에 올렸어요");
   await b.getByRole("button", { name: "보내기" }).click();
@@ -294,14 +343,14 @@ try {
 
   await a.getByRole("button", { name: "지급함" }).click();
   await a.getByText("비숍님에게 지급함으로 표시했습니다").waitFor();
+  await dot(a, "정산").waitFor({ state: "detached" });
+  await dot(b, "정산").waitFor();
   await b.getByRole("button", { name: "수령 확인" }).click();
   await b.getByText("수령을 확인했습니다").waitFor();
   await a.getByText("전원 수령 확인 · 정산 완료").waitFor();
+  await dot(b, "정산").waitFor({ state: "detached" });
   await shot(b, "12-settlement-done");
-  step("판매자가 지급함을 누르고 파티원이 수령을 확인하면 정산이 끝난다");
-
-  await a.getByRole("button", { name: "← 스우팟" }).click();
-  await a.getByRole("button", { name: "정산 완료 · 내역 보기" }).waitFor();
+  step("판매자가 지급함을 누르면 받을 사람의 정산 탭에 점이 붙고, 수령을 확인하면 정산이 끝난다");
 
   // ---------- 알림 설정 (에뮬레이터에서는 웹 푸시 키가 없음) ----------
   await a.getByRole("button", { name: "← 파티 목록" }).click();

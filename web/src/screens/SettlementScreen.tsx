@@ -3,9 +3,7 @@
 import { FEE_PERCENTS, MAX_SALE_AMOUNT, MAX_WEIGHT, computeSettlement } from "@shared/settlement/calc";
 import { FirebaseError } from "firebase/app";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
 import * as api from "../data/api";
-import { useMain } from "../main-context";
 import { toJpeg } from "../lib/image";
 import { type ChatMessage, type Party, type Schedule, type SettlementEntry, memberLabel } from "../lib/model";
 import { korean, meso } from "../lib/money";
@@ -16,26 +14,19 @@ import { Chips, Loading, useToast } from "../ui/common";
 const nameOf = (party: Party, uid: string) => memberLabel(party.members[uid]);
 
 /**
- * 클리어한 일정의 분배금 정산과 채팅.
+ * 클리어한 일정의 분배금 정산과 채팅. 파티 화면의 정산 탭 안에 들어간다.
  * 위쪽은 분배금 계산·상태(대기 → 지급함 → 수령 확인), 아래쪽은 수령 방법을 주고받는 채팅이다.
  */
-export function SettlementScreen() {
-  const { partyId = "", periodId = "" } = useParams();
-  const { uid } = useMain();
-  const navigate = useNavigate();
+export function SettlementContent({ uid, party, periodId }: { uid: string; party: Party; periodId: string }) {
+  const partyId = party.id;
   const toast = useToast();
-
-  const party = useSubscription(api.party(partyId), [partyId]);
   const schedule = useSubscription(api.schedule(partyId, periodId), [partyId, periodId]);
   const entries = useSubscription(api.settlementEntries(partyId, periodId), [partyId, periodId]) ?? [];
   const messages = useSubscription(api.messages(partyId, periodId), [partyId, periodId]);
   const [busy, setBusy] = useState(false);
 
-  // 파티에서 나갔거나 일정이 없으면 파티 목록으로 돌아간다.
-  useEffect(() => {
-    if (party === null || schedule === null) navigate("/parties", { replace: true });
-  }, [party, schedule, navigate]);
-  if (!party || !schedule) return <Loading />;
+  if (schedule === undefined) return <Loading />;
+  if (schedule === null) return <p>정산할 일정을 찾지 못했습니다.</p>;
 
   /** 서버에 보내고 결과를 화면 아래 알림으로 보여 준다. */
   async function run(success: string | null, action: () => Promise<unknown>): Promise<boolean> {
@@ -59,11 +50,7 @@ export function SettlementScreen() {
   }
 
   return (
-    <div className="page settlement-page">
-      <button className="btn-text" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => navigate(`/parties/${partyId}`)}>
-        ← {party.name}
-      </button>
-      <h1 style={{ margin: 0 }}>분배금 정산</h1>
+    <div className="settlement-content">
       {schedule.confirmed && (
         <span className="small muted">
           {range(schedule.confirmed.startMs, schedule.confirmed.endMs)} 레이드

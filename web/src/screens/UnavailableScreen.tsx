@@ -65,7 +65,8 @@ export function UnavailableScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [partyId, periodId, uid]);
 
-  const back = () => navigate(`/parties/${partyId}`, { replace: true });
+  // 끝나면 파티 화면의 투표 탭으로 돌아간다.
+  const back = () => navigate(`/parties/${partyId}/vote`, { replace: true });
 
   async function submit() {
     if (!selected || !schedule) return;

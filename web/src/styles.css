@@ -174,8 +174,12 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 
 .banner { background: var(--primary-container); color: var(--on-primary-container); border-radius: var(--radius); padding: 12px 14px; }
 
-/* 정산 화면: 위는 정산 상태(따로 스크롤), 아래는 채팅이 남은 높이를 다 쓴다 (Android와 같은 배치). */
-.page.settlement-page { height: 100dvh; padding-bottom: calc(8px + var(--safe-bottom)); gap: 8px; }
+/* 하단 탭의 할 일 점 */
+.tabs a .dot { position: absolute; top: 6px; left: calc(50% + 12px); width: 8px; height: 8px; border-radius: 50%; background: var(--error); }
+
+/* 정산 탭: 위는 정산 상태(따로 스크롤), 아래는 채팅이 남은 높이를 다 쓴다 (Android와 같은 배치). */
+.page.fill { height: 100dvh; gap: 8px; padding-bottom: calc(var(--tab-height) + 8px + var(--safe-bottom)); }
+.settlement-content { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .settlement-status { max-height: 42dvh; overflow-y: auto; flex: none; }
 .divider { border: none; border-top: 1px solid var(--surface-variant); margin: 0; width: 100%; }
 .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -188,4 +192,4 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 .chat-item .bubble .text { padding: 8px 12px; white-space: pre-wrap; word-break: break-word; }
 .chat-input textarea { resize: none; max-height: 96px; }
 /* 정산 화면에서는 채팅 입력창 위에 띄운다. */
-body:has(.settlement-page) .toast-region { bottom: calc(80px + var(--safe-bottom)); }
+body:has(.settlement-content) .toast-region { bottom: calc(var(--tab-height) + 80px + var(--safe-bottom)); }
