@@ -4,6 +4,21 @@
 
 각 버전에는 **서버 배포**가 필요한지와 **이전 앱과 호환**되는지를 적습니다.
 
+## 0.7.1 - 2026-11-24
+
+웹앱 주소를 https://bossplanner.web.app 으로 바꿨습니다.
+
+- 서버 배포: 필요 (Functions, Hosting)
+  `npx firebase deploy --project <프로젝트 ID> --only functions,hosting`
+  배포 전에 `web/.env.local`에 `VITE_WEB_APP_URL=https://bossplanner.web.app`을 넣어 두어야 예전 주소에서 옮겨 갑니다.
+- 이전 앱과 호환: 됨. Android 앱은 바뀐 것이 없음
+
+### 변경
+
+- 웹앱 주소: https://bossplanner.web.app. 예전 주소(프로젝트 ID.web.app)로 열면 같은 화면의 새 주소로 옮겨 감. 옮기기 전에 그 기기의 예전 주소 알림 등록을 지워 알림이 두 번 오지 않게 함
+- 알림을 눌렀을 때 열리는 웹앱 주소도 새 주소로 (`functions/.env`의 `WEB_APP_URL`)
+- 새 주소에서는 다시 로그인하고 알림을 다시 켜야 함. 아이폰은 홈 화면 아이콘을 새 주소에서 다시 추가
+
 ## 0.7.0 - 2026-11-24
 
 파티 화면을 하단 탭 네 개(파티 / 투표 / 정산 / 설정)로 나누고, 내 캐릭터 탭에 게임 스케줄러 보스와 수익 보기를 넣었습니다. Android 앱과 웹앱이 같습니다.

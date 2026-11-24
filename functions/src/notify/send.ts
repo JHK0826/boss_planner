@@ -27,11 +27,18 @@ export function toPartyInfo(snapshot: DocumentSnapshot): PartyInfo | null {
 }
 
 /**
- * 웹앱(아이폰·PC)에서 알림을 눌렀을 때 열 주소. Firebase Hosting 기본 도메인의 그 파티 화면이다.
- * 프로젝트 ID를 모르면(로컬 실행 등) undefined.
+ * 웹앱 주소. functions/.env의 WEB_APP_URL(예: https://bossplanner.web.app)을 쓰고,
+ * 없으면 Firebase Hosting 기본 도메인(https://<프로젝트 ID>.web.app). 둘 다 모르면(로컬 실행 등) undefined.
  */
-export function webPartyLink(partyId: string, projectId: string | undefined = process.env.GCLOUD_PROJECT): string | undefined {
-  return projectId ? `https://${projectId}.web.app/parties/${encodeURIComponent(partyId)}` : undefined;
+export function webAppUrl(env: Record<string, string | undefined> = process.env): string | undefined {
+  const configured = env.WEB_APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  return env.GCLOUD_PROJECT ? `https://${env.GCLOUD_PROJECT}.web.app` : undefined;
+}
+
+/** 웹앱(아이폰·PC)에서 알림을 눌렀을 때 열 그 파티 화면 주소 */
+export function webPartyLink(partyId: string, baseUrl: string | undefined = webAppUrl()): string | undefined {
+  return baseUrl ? `${baseUrl}/parties/${encodeURIComponent(partyId)}` : undefined;
 }
 
 /**
