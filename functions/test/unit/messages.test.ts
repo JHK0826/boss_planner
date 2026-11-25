@@ -36,6 +36,26 @@ describe("scheduleNotifications", () => {
     expect(notify(undefined, base)).toMatchObject([{ uids: ["a", "b", "c"], title: "스우팟", partyId: "p1" }]);
   });
 
+  it("다음 주 일정을 미리 열면 미리 조율할 수 있다고 알리고, 시작 전 전원 동의는 목요일부터 확정 가능하다고 알린다", () => {
+    const pre = { ...base, preOpened: true };
+    expect(notify(undefined, pre)).toMatchObject([{ uids: ["a", "b", "c"], body: expect.stringContaining("다음 주 일정을 미리 조율") }]);
+
+    const recommended = { ...pre, round: 1, candidates: [candidate], inputsKey: "k" };
+    expect(notify(recommended, { ...recommended, unanimous: [0] })).toMatchObject([
+      { uids: ["a"], body: expect.stringContaining("목요일 00:00부터 확정") },
+    ]);
+  });
+
+  it("목요일에 미리 연 일정이 이번 주기가 되면 시작을 알리고, 전원 동의가 있으면 파티장에게 확정을 알린다", () => {
+    const pre = { ...base, preOpened: true, round: 1, candidates: [candidate], unanimous: [0] };
+    expect(notify(pre, { ...pre, preOpened: false })).toMatchObject([
+      { uids: ["a", "b", "c"], body: expect.stringContaining("새 주기가 시작") },
+      { uids: ["a"], body: expect.stringContaining("이제 일정을 확정") },
+    ]);
+    const empty = { ...base, preOpened: true };
+    expect(notify(empty, { ...empty, preOpened: false })).toHaveLength(1);
+  });
+
   it("바뀐 것이 없으면 보내지 않는다", () => {
     expect(notify(base, { ...base, updatedAt: 1 })).toEqual([]);
   });

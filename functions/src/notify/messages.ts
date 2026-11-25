@@ -52,10 +52,26 @@ export function scheduleNotifications(
   const push = (uids: string[], body: string): Push => ({ uids, title: party.name, body, partyId: party.id });
   const pushes: Push[] = [];
 
-  // 주기 시작
+  // 주기 시작. 이번 주 레이드가 끝나 다음 주를 미리 연 경우는 문구가 다르다.
   if (!before) {
-    if (after.state === "OPEN") pushes.push(push(everyone, "새 주기 일정 조율이 시작됐습니다. 불가 시간을 입력해 주세요."));
+    if (after.state === "OPEN") {
+      pushes.push(
+        push(
+          everyone,
+          after.preOpened === true
+            ? "이번 주 레이드가 끝났습니다. 다음 주 일정을 미리 조율할 수 있어요. 불가 시간을 입력해 주세요."
+            : "새 주기 일정 조율이 시작됐습니다. 불가 시간을 입력해 주세요.",
+        ),
+      );
+    }
     return pushes;
+  }
+
+  // 미리 열어 둔 다음 주 일정이 이번 주기가 됨 (목요일 00:00)
+  const unanimousNow = ((after.unanimous as unknown[] | undefined) ?? []).length > 0;
+  if (before.preOpened === true && after.preOpened !== true && isOpen(after.state)) {
+    pushes.push(push(everyone, "새 주기가 시작됐습니다. 아직 입력하지 않았다면 불가 시간을 입력해 주세요."));
+    if (unanimousNow) pushes.push(push([party.leaderUid], "전원이 동의한 시간이 있습니다. 이제 일정을 확정할 수 있습니다."));
   }
 
   const stateChanged = before.state !== after.state;
@@ -110,7 +126,14 @@ export function scheduleNotifications(
   const hadUnanimous = ((before.unanimous as unknown[] | undefined) ?? []).length > 0;
   const hasUnanimous = ((after.unanimous as unknown[] | undefined) ?? []).length > 0;
   if (isOpen(after.state) && hasUnanimous && !hadUnanimous) {
-    pushes.push(push([party.leaderUid], "전원이 동의한 시간이 있습니다. 일정을 확정해 주세요."));
+    pushes.push(
+      push(
+        [party.leaderUid],
+        after.preOpened === true
+          ? "전원이 동의한 시간이 있습니다. 목요일 00:00부터 확정할 수 있어요."
+          : "전원이 동의한 시간이 있습니다. 일정을 확정해 주세요.",
+      ),
+    );
   }
 
   // 변경 요청

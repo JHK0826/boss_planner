@@ -59,6 +59,12 @@ export async function confirmSchedule(
     if (schedule.state !== "OPEN" && schedule.state !== "RETRY") {
       throw new HttpsError("failed-precondition", "이미 확정되었거나 종료된 일정입니다.", { reason: "not-open" });
     }
+    // 미리 연 다음 주 일정은 입력과 투표만 미리 하고, 확정은 주기가 시작한 뒤에 한다(목요일 가입·탈퇴를 막지 않도록).
+    if ((schedule.periodStart as Timestamp).toMillis() > nowMs) {
+      throw new HttpsError("failed-precondition", "다음 주 일정은 목요일 00:00부터 확정할 수 있습니다.", {
+        reason: "not-started",
+      });
+    }
 
     const memberUids = party.memberUids as string[];
     const candidates = (schedule.candidates as Candidate[]) ?? [];

@@ -6,7 +6,7 @@ import { messageNotification, scheduleNotifications, settlementNotifications } f
 import { runInputDeadlineCheck, sendPushes, toPartyInfo } from "./notify/send";
 import { resolveRaidResult, runDailyClearCheck } from "./schedule/clear";
 import { evaluateSchedule } from "./schedule/evaluate";
-import { openSchedules } from "./schedule/open";
+import { openNextPeriod, openSchedules } from "./schedule/open";
 import { sweepSchedules } from "./schedule/sweep";
 
 /** 불가 시간이 바뀌면: 전원 제출 시 추천 후보 계산, 겹치는 시간이 없으면 SKIPPED */
@@ -72,9 +72,15 @@ export const onScheduleStateChange = onDocumentWritten(
   { document: "parties/{partyId}/schedules/{periodId}", region: REGION },
   async (event) => {
     const db = getFirestore();
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    // 이번 주기 레이드가 끝나면 다음 주 일정을 미리 연다 (주간 파티).
+    if (after && before?.state !== after.state) {
+      await openNextPeriod(db, event.params.partyId, after, Date.now());
+    }
     const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());
     if (!party) return;
-    await sendPushes(db, scheduleNotifications(party, event.data?.before.data(), event.data?.after.data()));
+    await sendPushes(db, scheduleNotifications(party, before, after));
   },
 );
 

@@ -29,7 +29,8 @@ export async function loadPendingSlots(
   const slots = new Set<number>();
   await Promise.all(
     [...others].map(async ([otherId, cycle]) => {
-      const schedule = await db.doc(`parties/${otherId}/schedules/${currentPeriod(cycle, nowMs).id}`).get();
+      // 추천하는 주기와 같은 때의 일정을 본다(미리 연 다음 주 일정이면 다른 파티의 다음 주 일정).
+      const schedule = await db.doc(`parties/${otherId}/schedules/${currentPeriod(cycle, Math.max(period.startMs, nowMs)).id}`).get();
       const state = schedule.get("state") as string | undefined;
       if (state !== "OPEN" && state !== "RETRY") return;
       for (const candidate of (schedule.get("candidates") as Candidate[] | undefined) ?? []) {
