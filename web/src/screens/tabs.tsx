@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as api from "../data/api";
 import { PARTY_SORTS, type PartySort, useMain } from "../main-context";
-import { periodColumns, routineKey } from "../lib/grid";
 import { bossLabel, type Party, type PartyMember } from "../lib/model";
 import { statusText } from "../lib/partyStatus";
-import { DAY_MS, SLOT_MS, SLOTS_PER_DAY, dateTime, dayLabel, range, rowLabel, weekStart } from "../lib/time";
+import { DAY_MS, dateTime, dayLabel, range, weekStart } from "../lib/time";
+import { partyColors, raidTimeline } from "../lib/timeline";
 import { useNow, useSubscription } from "../lib/useSubscription";
 import { disablePush, enablePush, pushAvailability, type PushAvailability, pushEnabled } from "../lib/push";
 import { BossChips } from "../ui/BossChips";
+import { partyColor, RaidTimeline } from "../ui/RaidTimeline";
 import { Loading, useTheme, useToast } from "../ui/common";
 
 // ---------- 내 캐릭터 ----------
@@ -228,30 +229,27 @@ function InstallBanner() {
 
 // ---------- 시간표 ----------
 
-/** 고정 불가 시간을 설정하고, 이번 주(목~수)의 확정 일정과 고정 불가 시간을 한눈에 본다. */
+/**
+ * 고정 불가 시간을 설정하고, 이번 주·다음 주(목~수)의 확정 일정을 가로 타임라인으로 한눈에 본다.
+ * 파티마다 색이 다르고, 레이드가 없는 시간은 접는다. 파티마다 따로 제출한 불가 시간은 여기에 나오지 않는다.
+ */
 export function TimetableTab() {
   const { uid } = useMain();
   const navigate = useNavigate();
   const now = useNow();
   const start = useMemo(() => weekStart(Date.now()), []);
+  const [nextWeek, setNextWeek] = useState(false);
+  const shownStart = nextWeek ? start + 7 * DAY_MS : start;
+  // 이번 주 시작부터 이후 전부라 다음 주 확정 일정도 들어 있다.
   const raids = useSubscription(api.myRaids(uid, start), [uid, start]);
   const [routine, setRoutine] = useState<Set<string>>(new Set());
   useEffect(() => {
     api.loadRoutine(uid).then(setRoutine, () => setRoutine(new Set()));
   }, [uid]);
 
-  const columns = useMemo(() => periodColumns(start, start + 7 * DAY_MS), [start]);
-  // 이번 주 칸 번호(날 × 48 + 행) 중 레이드가 잡힌 칸
-  const raidSlots = useMemo(() => {
-    const slots = new Set<number>();
-    for (const raid of raids ?? []) {
-      const first = Math.floor((raid.startMs - start) / SLOT_MS);
-      const last = Math.floor((raid.endMs - 1 - start) / SLOT_MS);
-      for (let i = Math.max(first, 0); i <= last && i < 7 * SLOTS_PER_DAY; i++) slots.add(i);
-    }
-    return slots;
-  }, [raids, start]);
-  const nowSlot = Math.floor((now - start) / SLOT_MS);
+  const timeline = useMemo(() => raidTimeline(raids ?? [], shownStart, routine, now), [raids, shownStart, routine, now]);
+  const colors = useMemo(() => partyColors(raids ?? []), [raids]);
+  const openParty = (partyId: string) => navigate(`/parties/${partyId}`);
 
   return (
     <div className="page with-tabs">
@@ -259,6 +257,37 @@ export function TimetableTab() {
       <button className="btn-outline full" onClick={() => navigate("/timetable/routine")}>
         고정 불가 시간 설정
       </button>
+      <h2>
+        {nextWeek ? "다음 주" : "이번 주"} ({dayLabel(shownStart)} ~ {dayLabel(shownStart + 7 * DAY_MS - 1)})
+      </h2>
+      <div className="row">
+        <button className="chip" aria-pressed={!nextWeek} onClick={() => setNextWeek(false)}>
+          이번 주
+        </button>
+        <button className="chip" aria-pressed={nextWeek} onClick={() => setNextWeek(true)}>
+          다음 주
+        </button>
+      </div>
+      {raids === undefined ? (
+        <Loading />
+      ) : (
+        <>
+          <RaidTimeline timeline={timeline} onOpenParty={openParty} />
+          <div className="row" style={{ flexWrap: "wrap", gap: "6px 12px" }}>
+            {timeline.parties.map((party) => (
+              <span key={party.partyId} className="legend">
+                <i className="dot" style={{ background: partyColor(party.colorIndex) }} />
+                {party.partyName}
+              </span>
+            ))}
+            <span className="legend">
+              <i style={{ background: "var(--error-container)", opacity: "var(--routine-opacity)" }} />
+              고정 불가 시간
+            </span>
+          </div>
+          {timeline.bars.length === 0 && <p className="small muted">이 주에 확정된 일정이 없습니다.</p>}
+        </>
+      )}
       <h2>확정된 일정</h2>
       {raids === undefined ? (
         <Loading />
@@ -270,51 +299,21 @@ export function TimetableTab() {
             key={`${raid.partyId}-${raid.startMs}`}
             className="card clickable"
             style={{ opacity: raid.endMs <= now ? 0.5 : 1 }}
-            onClick={() => navigate(`/parties/${raid.partyId}`)}
+            onClick={() => openParty(raid.partyId)}
           >
-            <strong>
-              {range(raid.startMs, raid.endMs)}
-              {raid.endMs <= now ? " · 지남" : ""}
-            </strong>
-            <div className="small muted">
+            <div className="row" style={{ gap: 8 }}>
+              <i className="dot" style={{ background: partyColor(colors.get(raid.partyId) ?? 0) }} />
+              <strong>
+                {range(raid.startMs, raid.endMs)}
+                {raid.endMs <= now ? " · 지남" : ""}
+              </strong>
+            </div>
+            <div className="small muted" style={{ marginLeft: 18 }}>
               {raid.partyName} · {bossLabel(raid.bosses)}
             </div>
           </div>
         ))
       )}
-      <h2>
-        이번 주 ({dayLabel(start)} ~ {dayLabel(start + 7 * DAY_MS - 1)})
-      </h2>
-      <div className="row">
-        <span className="legend">
-          <i style={{ background: "var(--primary)" }} />
-          확정 일정
-        </span>
-        <span className="legend">
-          <i style={{ background: "var(--error-container)" }} />
-          고정 불가 시간
-        </span>
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: "40px repeat(7, 1fr)" }}>
-        <div className="head" />
-        {columns.map((c) => (
-          <div key={c.subtitle} className="head">
-            {c.title}
-            <br />
-            {c.subtitle}
-          </div>
-        ))}
-        {Array.from({ length: SLOTS_PER_DAY }, (_, row) => [
-          <div key={`t${row}`} className="time">
-            {row % 2 === 0 ? rowLabel(row) : ""}
-          </div>,
-          ...columns.map((c, day) => {
-            const index = day * SLOTS_PER_DAY + row;
-            const kind = raidSlots.has(index) ? "raid" : routine.has(routineKey(c.weekday, row)) ? "routine" : "";
-            return <div key={`${day}-${row}`} className={`cell ${kind} ${index < nowSlot ? "past" : ""}`} style={{ height: 16 }} />;
-          }),
-        ])}
-      </div>
     </div>
   );
 }

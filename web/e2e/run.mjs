@@ -275,6 +275,30 @@ try {
   await shot(a, "10-locked");
   step("파티장이 전원 동의 시간을 확정한다");
 
+  // ---------- 시간표 타임라인 ----------
+  await a.goto(new URL("/timetable", a.url()).href);
+  // 확정 시간이 이번 주(목~수)인지 다음 주인지는 테스트를 돌리는 날에 따라 다르다. 1970-01-01(KST)이 목요일이다.
+  const kstWeek = (ms) => Math.floor(Math.floor((ms + 9 * 3600_000) / 86_400_000) / 7);
+  const raidInNextWeek = kstWeek((await scheduleRef.get()).get("confirmed.start").toMillis()) !== kstWeek(Date.now());
+  const [raidWeek, otherWeek] = raidInNextWeek ? ["다음 주", "이번 주"] : ["이번 주", "다음 주"];
+  await a.getByRole("button", { name: raidWeek }).click();
+  const raidBar = a.getByRole("button", { name: /^스우팟 / });
+  await raidBar.waitFor();
+  await a.getByText("이 주에 확정된 일정이 없습니다").waitFor({ state: "detached" });
+  await shot(a, "10a-timeline");
+  const theme = await a.evaluate(() => document.documentElement.dataset.theme);
+  await a.evaluate((t) => (document.documentElement.dataset.theme = t === "dark" ? "light" : "dark"), theme);
+  await shot(a, "10b-timeline-other-theme");
+  await a.evaluate((t) => (document.documentElement.dataset.theme = t), theme);
+  await a.getByRole("button", { name: otherWeek }).click();
+  await a.getByText("이 주에 확정된 일정이 없습니다").waitFor();
+  assert.equal(await raidBar.count(), 0);
+  await a.getByRole("button", { name: raidWeek }).click();
+  await raidBar.click();
+  await tab(a, "투표");
+  await a.getByText("확정된 시간").waitFor();
+  step("시간표 탭: 확정한 파티가 그 주 타임라인에 막대로 보이고, 다른 주로 넘기거나 막대를 눌러 파티로 간다");
+
   // ---------- 변경 요청 → 거절 ----------
   await b.getByRole("button", { name: "일정 변경 요청" }).click();
   const changeDialog = b.getByRole("dialog", { name: "일정 변경 요청" });

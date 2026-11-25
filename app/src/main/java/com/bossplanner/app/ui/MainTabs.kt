@@ -1,11 +1,16 @@
 package com.bossplanner.app.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
+import com.bossplanner.app.data.Timeline
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -318,15 +322,13 @@ fun SettingsTab(profile: UserProfile, onEditApiKey: () -> Unit, onSignOut: () ->
 /** NEXON Open API 출처 표기 (이용 조건) */
 private const val NEXON_ATTRIBUTION = "Data based on NEXON Open API"
 
-private val TIME_LABEL_WIDTH = 44.dp
-private val TIMETABLE_CELL_HEIGHT = 18.dp
 private const val DAY_MS = TimeSlots.SLOTS_PER_DAY * TimeSlots.SLOT_MS
 
 /**
- * 시간표: 고정 불가 시간을 설정하고, 이번 주(목~수)의 확정 일정을 한눈에 본다.
- * 시간표의 색은 확정된 레이드와 고정 불가 시간이다. 파티마다 따로 제출한 불가 시간은 여기에 나오지 않는다.
+ * 시간표: 고정 불가 시간을 설정하고, 이번 주·다음 주(목~수)의 확정 일정을 가로 타임라인으로 한눈에 본다.
+ * 파티마다 색이 다르고, 레이드가 없는 시간은 접는다. 파티마다 따로 제출한 불가 시간은 여기에 나오지 않는다.
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TimetableTab(
     uid: String,
@@ -337,8 +339,9 @@ fun TimetableTab(
 ) {
     val now = remember { System.currentTimeMillis() }
     val weekStart = remember { TimeSlots.weekStart(now) }
-    val weekEnd = weekStart + 7 * DAY_MS
-    // null = 아직 받아 오는 중
+    var nextWeek by remember { mutableStateOf(false) }
+    val shownStart = if (nextWeek) weekStart + 7 * DAY_MS else weekStart
+    // null = 아직 받아 오는 중. 이번 주 시작부터 이후 전부라 다음 주 확정 일정도 들어 있다.
     val loadedRaids by remember(uid, weekStart) { parties.myRaids(uid, weekStart) }
         .collectAsStateWithLifecycle<List<Raid>?>(null)
     val raids = loadedRaids.orEmpty()
@@ -352,48 +355,82 @@ fun TimetableTab(
         }
     }
 
-    // 이번 주 칸 번호(날 × 48 + 행) 중 레이드가 잡힌 칸
-    val raidSlots = remember(raids, weekStart) {
-        raids.flatMap { raid ->
-            val first = Math.floorDiv(raid.startMs - weekStart, TimeSlots.SLOT_MS).toInt()
-            val last = Math.floorDiv(raid.endMs - 1 - weekStart, TimeSlots.SLOT_MS).toInt()
-            (first..last).filter { it in 0 until 7 * TimeSlots.SLOTS_PER_DAY }
-        }.toSet()
-    }
-    val nowSlot = ((now - weekStart) / TimeSlots.SLOT_MS).toInt()
-    val raidColor = MaterialTheme.colorScheme.primary
-    val routineColor = MaterialTheme.colorScheme.errorContainer
-    val freeColor = MaterialTheme.colorScheme.surfaceVariant
+    val layout = remember(raids, shownStart, routine) { Timeline.layout(raids, shownStart, routine, now) }
+    val colors = remember(raids) { Timeline.partyColors(raids) }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        val cellWidth = (maxWidth - TIME_LABEL_WIDTH) / 7
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            item { TabTitle("시간표") }
-            item {
-                OutlinedButton(onClick = onEditRoutine, modifier = Modifier.fillMaxWidth()) { Text("고정 불가 시간 설정") }
-            }
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        item { TabTitle("시간표") }
+        item {
+            OutlinedButton(onClick = onEditRoutine, modifier = Modifier.fillMaxWidth()) { Text("고정 불가 시간 설정") }
+        }
 
-            item {
+        item {
+            Column(modifier = Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "확정된 일정",
+                    "${if (nextWeek) "다음 주" else "이번 주"} (${TimeSlots.dayLabel(shownStart)} ~ ${TimeSlots.dayLabel(shownStart + 7 * DAY_MS - 1)})",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !nextWeek, onClick = { nextWeek = false }, label = { Text("이번 주") })
+                    FilterChip(selected = nextWeek, onClick = { nextWeek = true }, label = { Text("다음 주") })
+                }
             }
-            if (loadedRaids == null) {
-                item { Loading() }
-            } else if (raids.isEmpty()) {
-                item { Text("이번 주 이후로 확정된 일정이 없습니다.", style = MaterialTheme.typography.bodyMedium) }
-            }
-            items(raids, key = { "${it.partyId}-${it.startMs}" }) { raid ->
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                        .alpha(if (raid.endMs <= now) 0.5f else 1f)
-                        .clickable { onOpenParty(raid.partyId) },
+        }
+        if (loadedRaids == null) {
+            item { Loading() }
+        } else {
+            item { RaidTimeline(layout, onOpenParty) }
+            item {
+                FlowRow(
+                    modifier = Modifier.padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    layout.parties.forEach { party -> Legend(partyColor(party.colorIndex), party.partyName, round = true) }
+                    Legend(routineColor(), "고정 불가 시간")
+                }
+            }
+            if (layout.bars.isEmpty()) {
+                item {
+                    Text(
+                        "이 주에 확정된 일정이 없습니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
+
+        item {
+            Text(
+                "확정된 일정",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+            )
+        }
+        if (loadedRaids == null) {
+            item { Loading() }
+        } else if (raids.isEmpty()) {
+            item { Text("이번 주 이후로 확정된 일정이 없습니다.", style = MaterialTheme.typography.bodyMedium) }
+        }
+        items(raids, key = { "${it.partyId}-${it.startMs}" }) { raid ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp)
+                    .alpha(if (raid.endMs <= now) 0.5f else 1f)
+                    .clickable { onOpenParty(raid.partyId) },
+            ) {
+                Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        Modifier
+                            .padding(top = 5.dp)
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(partyColor(colors[raid.partyId] ?: 0)),
+                    )
+                    Column {
                         Text(
                             TimeSlots.range(raid.startMs, raid.endMs) + if (raid.endMs <= now) " · 지남" else "",
                             style = MaterialTheme.typography.titleSmall,
@@ -402,69 +439,15 @@ fun TimetableTab(
                     }
                 }
             }
-
-            item {
-                Column(modifier = Modifier.padding(top = 12.dp)) {
-                    Text(
-                        "이번 주 (${TimeSlots.dayLabel(weekStart)} ~ ${TimeSlots.dayLabel(weekEnd - 1)})",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Legend(raidColor, "확정 일정")
-                        Legend(routineColor, "고정 불가 시간")
-                    }
-                }
-            }
-            // 요일 줄은 시간표를 내려도 위에 붙어 있다.
-            stickyHeader {
-                Row(modifier = Modifier.background(MaterialTheme.colorScheme.surface).padding(vertical = 4.dp)) {
-                    Box(Modifier.width(TIME_LABEL_WIDTH))
-                    repeat(7) { day ->
-                        val dayStart = weekStart + day * DAY_MS
-                        Column(modifier = Modifier.width(cellWidth), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(TimeSlots.weekdayLabel(dayStart), style = MaterialTheme.typography.labelMedium)
-                            Text(TimeSlots.dayLabel(dayStart), style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
-            items(TimeSlots.SLOTS_PER_DAY) { row ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (row % 2 == 0) TimeSlots.rowLabel(row) else "",
-                        modifier = Modifier.width(TIME_LABEL_WIDTH).padding(end = 6.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        textAlign = TextAlign.End,
-                    )
-                    repeat(7) { day ->
-                        val index = day * TimeSlots.SLOTS_PER_DAY + row
-                        val weekday = TimeSlots.weekday(weekStart + day * DAY_MS)
-                        val color = when {
-                            index in raidSlots -> raidColor
-                            RoutineRepository.key(weekday, row) in routine -> routineColor
-                            else -> freeColor
-                        }
-                        Box(
-                            modifier = Modifier
-                                .width(cellWidth)
-                                .height(TIMETABLE_CELL_HEIGHT)
-                                .padding(horizontal = 1.dp)
-                                // 지난 시간은 흐리게
-                                .alpha(if (index < nowSlot) 0.4f else 1f)
-                                .background(color),
-                        )
-                    }
-                }
-            }
-            item { Box(Modifier.height(TAB_PADDING)) }
         }
+        item { Box(Modifier.height(TAB_PADDING)) }
     }
 }
 
 @Composable
-internal fun Legend(color: Color, label: String) {
+internal fun Legend(color: Color, label: String, round: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Box(Modifier.size(12.dp).background(color))
+        Box(Modifier.size(12.dp).clip(if (round) CircleShape else RectangleShape).background(color))
         Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }
