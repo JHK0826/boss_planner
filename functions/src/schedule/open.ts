@@ -1,5 +1,6 @@
 import type { DocumentData, Firestore, Timestamp } from "firebase-admin/firestore";
 import { currentPeriod, type Cycle } from "../domain/time";
+import { evaluateSchedule } from "./evaluate";
 import { durationMinutesOf, newScheduleData } from "./model";
 
 const ALREADY_EXISTS = 6;
@@ -11,6 +12,7 @@ const FINISHED_STATES = new Set(["SETTLED", "SKIPPED", "EXPIRED"]);
  * 주기 시작 시 해당 주기(주간/월간) 파티의 일정 문서를 만든다.
  * 이미 있으면 새로 만들지 않으므로 다시 실행해도 안전하다.
  * 미리 열어 둔 문서(preOpened)는 이제 이번 주기가 되었으므로 표시를 끈다(시작 알림이 이것으로 나간다).
+ * 투표 없이 자동 지정하는 파티면, 전원이 미리 냈을 때 바로 점수 1위 시간으로 확정한다.
  *
  * 이번 주기에 만들어졌고 아직 시작하지 않은 파티는 건너뛴다. 만든 주기에는 파티장이 직접 시작해야 한다.
  * (예약 작업이 늦게 돌아 주기 시작 직후에 만든 파티를 만나는 경우를 막는다.)
@@ -29,7 +31,15 @@ export async function openSchedules(db: Firestore, cycle: Cycle, nowMs: number):
     } catch (error) {
       if ((error as { code?: number }).code !== ALREADY_EXISTS) throw error;
       const existing = await scheduleRef.get();
-      if (existing.get("preOpened") === true) await scheduleRef.update({ preOpened: false });
+      if (existing.get("preOpened") === true) {
+        await scheduleRef.update({ preOpened: false });
+        // 한 파티가 실패해도 나머지 파티의 새 주기는 계속 연다.
+        if (party.get("autoAssign") === true) {
+          await evaluateSchedule(db, party.id, period.id, nowMs).catch((error) =>
+            console.error("auto assign at period start failed", party.id, (error as Error).message),
+          );
+        }
+      }
     }
     if (party.get("scheduleStarted") !== true) await party.ref.update({ scheduleStarted: true });
   }

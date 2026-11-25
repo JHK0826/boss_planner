@@ -136,8 +136,15 @@ const MAX_LEAD_MINUTES = 48 * 60;
  * - minLeadMinutes: 최소 여유 시간(분). 30분 단위, 0~2일
  * 요청에 없는 항목은 결과에도 넣지 않는다.
  */
-function parsePreferences(data: Data): { preferredWindow?: PreferredWindow | null; minLeadMinutes?: number } {
-  const result: { preferredWindow?: PreferredWindow | null; minLeadMinutes?: number } = {};
+interface Preferences {
+  preferredWindow?: PreferredWindow | null;
+  minLeadMinutes?: number;
+  /** 투표 없이 점수 1위 시간으로 자동 지정 */
+  autoAssign?: boolean;
+}
+
+function parsePreferences(data: Data): Preferences {
+  const result: Preferences = {};
 
   const window = data?.preferredWindow;
   if (window === null) {
@@ -169,6 +176,14 @@ function parsePreferences(data: Data): { preferredWindow?: PreferredWindow | nul
       });
     }
     result.minLeadMinutes = lead;
+  }
+
+  const autoAssign = data?.autoAssign;
+  if (autoAssign !== undefined) {
+    if (typeof autoAssign !== "boolean") {
+      throw new HttpsError("invalid-argument", "자동 지정 설정이 올바르지 않습니다.", { field: "autoAssign" });
+    }
+    result.autoAssign = autoAssign;
   }
   return result;
 }
@@ -221,6 +236,7 @@ export async function createParty(db: Firestore, uid: string, data: Data, nowMs:
         durationSlots: slotsForMinutes(durationMinutes),
         preferredWindow: preferences.preferredWindow ?? null,
         minLeadMinutes: preferences.minLeadMinutes ?? DEFAULT_MIN_LEAD_MINUTES,
+        autoAssign: preferences.autoAssign ?? false,
         leaderUid: uid,
         memberUids: [uid],
         members: { [uid]: member },
@@ -345,8 +361,9 @@ export async function delegateLeader(db: Firestore, uid: string, data: Data, now
 }
 
 /**
- * 파티장이 추천 설정(선호 시간대, 최소 여유 시간)을 바꾼다.
- * 이번 주기 일정이 아직 조율 중이면 새 설정으로 후보를 다시 계산한다(투표도 다시 한다).
+ * 파티장이 추천 설정(선호 시간대, 최소 여유 시간, 투표 없이 자동 지정)을 바꾼다.
+ * 조율 중인 일정(미리 연 다음 주 포함)은 새 설정으로 후보를 다시 계산한다(투표도 다시 한다).
+ * 자동 지정을 켰고 전원이 낸 이번 주기 일정은 바로 점수 1위 시간으로 확정된다.
  */
 export async function updatePartyPreferences(db: Firestore, uid: string, data: Data, nowMs: number): Promise<void> {
   const partyId = text(data, "partyId", 64);
@@ -356,16 +373,16 @@ export async function updatePartyPreferences(db: Firestore, uid: string, data: D
   }
   const partyRef = db.doc(`parties/${partyId}`);
 
-  const cycle = await db.runTransaction(async (tx) => {
+  await db.runTransaction(async (tx) => {
     const party = (await tx.get(partyRef)).data();
     if (!party || party.leaderUid !== uid) {
       throw new HttpsError("permission-denied", "파티장만 추천 설정을 바꿀 수 있습니다.", { reason: "not-leader" });
     }
-    tx.update(partyRef, preferences);
-    return party.cycle as Cycle;
+    tx.update(partyRef, { ...preferences });
   });
 
-  await evaluateSchedule(db, partyId, currentPeriod(cycle, nowMs).id, nowMs);
+  const open = await partyRef.collection("schedules").where("state", "in", ["OPEN", "RETRY"]).get();
+  for (const schedule of open.docs) await evaluateSchedule(db, partyId, schedule.id, nowMs);
 }
 
 /**

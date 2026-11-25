@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { FieldPath, Timestamp, type Firestore } from "firebase-admin/firestore";
 import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
-import { preferredSlots, recommendStarts, unanimousCandidates } from "../domain/recommend";
-import { SLOT_MS, kstWeekday, slotIdFromMs, slotIndex, slotMs } from "../domain/time";
-import { DEFAULT_MIN_LEAD_MINUTES, type Candidate, type PreferredWindow } from "./model";
+import { comfortSlots, preferredSlots, rankStarts, unanimousCandidates, usualStartSlots } from "../domain/recommend";
+import { SLOT_MS, kstWeekday, slotIdFromMs, slotIdsBetween, slotIndex, slotMs } from "../domain/time";
+import { readBusyConflicts, writeLock } from "./confirm";
+import { loadRecentRaidStarts, type RaidStart } from "./history";
+import { DEFAULT_MIN_LEAD_MINUTES, type AssignMode, type Candidate, type PreferredWindow } from "./model";
 import { loadPendingSlots, type PendingSlots } from "./pending";
 
 export type EvaluateResult =
@@ -15,7 +17,11 @@ export type EvaluateResult =
   | "unanimous"
   | "next-round"
   | "refreshed"
-  | "unchanged";
+  | "unchanged"
+  /** 투표 없이 자동 지정: 주기 시작 전이라 1위를 보여 주며 기다린다 */
+  | "waiting-auto"
+  /** 투표 없이 자동 지정: 1위로 확정했다 */
+  | "auto-confirmed";
 
 export interface EvaluateOptions {
   /**
@@ -36,6 +42,10 @@ export interface EvaluateOptions {
  * - 입력이 그대로면 투표를 본다. 전원이 투표했는데 전원 동의 후보가 없으면 다음 후보로
  *   넘어가고, 더 줄 후보가 없으면 SKIPPED.
  * - refreshIfUnvoted: 아무도 투표하지 않았으면 같은 입력으로 후보를 다시 고른다(다른 파티 확정 반영).
+ *
+ * 투표 없이 자동 지정하는 파티(party.autoAssign)는 투표를 보지 않는다.
+ * - 주기가 시작했으면 전원이 내는 즉시, 지금 시각·busy로 다시 계산해 점수 1위로 같은 트랜잭션에서 확정한다.
+ * - 주기 시작 전(미리 연 다음 주)이면 순위 후보만 저장해 두고, 목요일 전환(open.ts)에서 확정한다.
  */
 export async function evaluateSchedule(
   db: Firestore,
@@ -49,8 +59,11 @@ export async function evaluateSchedule(
   const refresh = options.refreshIfUnvoted === true;
   const first = await attempt(db, partyId, periodId, nowMs, null, refresh);
   if (typeof first === "string") return first;
-  const pending = await loadPendingSlots(db, partyId, first.memberUids, first.memberCharacterIds, first.period, nowMs);
-  const second = await attempt(db, partyId, periodId, nowMs, pending, refresh);
+  const [pending, usual] = await Promise.all([
+    loadPendingSlots(db, partyId, first.memberUids, first.memberCharacterIds, first.period, nowMs),
+    loadRecentRaidStarts(db, partyId, periodId),
+  ]);
+  const second = await attempt(db, partyId, periodId, nowMs, { pending, usual }, refresh);
   return typeof second === "string" ? second : "not-open";
 }
 
@@ -60,12 +73,18 @@ interface NeedsPending {
   period: { startMs: number; totalSlots: number };
 }
 
+/** 트랜잭션 밖에서 미리 읽어 두는 참고용 값: 다른 파티의 투표 중 후보, 이 파티의 최근 레이드 시각 */
+interface Context {
+  pending: PendingSlots;
+  usual: RaidStart[];
+}
+
 function attempt(
   db: Firestore,
   partyId: string,
   periodId: string,
   nowMs: number,
-  pending: PendingSlots | null,
+  context: Context | null,
   refresh: boolean,
 ): Promise<EvaluateResult | NeedsPending> {
   const partyRef = db.doc(`parties/${partyId}`);
@@ -102,21 +121,33 @@ function attempt(
 
     const slotsOf = (uid: string): string[] =>
       ((unavailable.get(uid)?.slots as unknown[]) ?? []).filter((s): s is string => typeof s === "string").sort();
-    // 추천 설정(선호 시간대, 최소 여유 시간)이 바뀌어도 후보를 다시 계산해야 하므로 함께 넣는다.
-    // 설정을 따로 정하지 않은 파티는 예전과 같은 키가 나오게 한다.
+    // 추천 설정(선호 시간대, 최소 여유 시간, 자동 지정)이 바뀌어도 후보를 다시 계산해야 하므로 함께 넣는다.
+    // 설정을 따로 정하지 않은 파티는 예전과 같은 키가 나오게 한다. 자동 지정은 켠 파티만 키에 넣는다.
     const preferredWindow = (party.preferredWindow as PreferredWindow | null | undefined) ?? null;
     const minLeadMinutes = (party.minLeadMinutes as number | undefined) ?? DEFAULT_MIN_LEAD_MINUTES;
+    const autoAssign = party.autoAssign === true;
+    const assignMode: AssignMode = autoAssign ? "AUTO" : "VOTE";
+    // 주기가 시작했으면 확정할 수 있다. 미리 연 다음 주는 목요일 00:00부터다(confirm.ts와 같은 규칙).
+    const confirmable = period.startMs <= nowMs;
     const memberInputs = memberUids.map((uid) => [uid, slotsOf(uid)]);
-    const hasSettings = preferredWindow !== null || party.minLeadMinutes !== undefined;
+    const settings = autoAssign ? { preferredWindow, minLeadMinutes, autoAssign } : { preferredWindow, minLeadMinutes };
+    const hasSettings = preferredWindow !== null || party.minLeadMinutes !== undefined || autoAssign;
     const inputsKey = createHash("sha256")
-      .update(JSON.stringify(hasSettings ? [memberInputs, { preferredWindow, minLeadMinutes }] : memberInputs))
+      .update(JSON.stringify(hasSettings ? [memberInputs, settings] : memberInputs))
       .digest("hex");
     const inputsChanged = schedule.inputsKey !== inputsKey;
 
     let alreadyOffered: string[] = [];
     // 아무도 투표하지 않은 후보를 다른 파티 확정에 맞춰 다시 고르는 중
     let refreshing = false;
-    if (!inputsChanged) {
+    if (autoAssign) {
+      // 투표는 보지 않는다. 주기가 시작했으면 언제든 지금 기준으로 다시 계산해 바로 확정한다.
+      // 주기 시작 전이면 입력이 바뀌었거나 다른 파티가 확정했을 때만 예정 후보를 다시 고른다.
+      if (!confirmable && !inputsChanged) {
+        if (!refresh) return "waiting-auto";
+        refreshing = true;
+      }
+    } else if (!inputsChanged) {
       if (candidates.length === 0) return "waiting-votes";
       const votesSnap = await tx.get(scheduleRef.collection("votes"));
       const votes = new Map(votesSnap.docs.map((doc) => [doc.id, doc.data()]));
@@ -147,7 +178,8 @@ function attempt(
     const memberCharacterIds = memberUids.map(
       (uid) => (party.members as Record<string, { characterId?: string } | undefined> | undefined)?.[uid]?.characterId,
     );
-    if (pending === null) return { memberUids, memberCharacterIds, period };
+    if (context === null) return { memberUids, memberCharacterIds, period };
+    const { pending, usual } = context;
 
     // 다른 파티에서 확정된 시간(busy)은 불가 시간과 같은 판정으로 뺀다.
     const periodEndMs = (schedule.periodEnd as Timestamp).toMillis();
@@ -174,8 +206,14 @@ function attempt(
     );
     const blocked = memberUids.map((uid, i) => [...toIndexes(slotsOf(uid)), ...busy[i]]);
 
+    // 생활 시간대 보정과 평소 레이드 시각 (선호 시간대 안은 보정하지 않는다)
+    const firstWeekday = kstWeekday(period.startMs);
+    const preferred = preferredWindow ? preferredSlots(preferredWindow, period.totalSlots, firstWeekday) : undefined;
+    const comfort = comfortSlots(period.totalSlots, firstWeekday, preferred);
+    const usualStarts = usualStartSlots(usual, period.totalSlots, firstWeekday);
+
     const recommend = (leadMinutes: number) =>
-      recommendStarts({
+      rankStarts({
         totalSlots: period.totalSlots,
         durationSlots,
         blocked,
@@ -184,22 +222,24 @@ function attempt(
         pending: pending.all,
         pendingByMember: pending.byMember,
         pendingSameCharacter: pending.sameCharacterByMember,
-        preferred: preferredWindow
-          ? preferredSlots(preferredWindow, period.totalSlots, kstWeekday(period.startMs))
-          : undefined,
+        preferred,
+        comfort,
+        usualStarts,
+        // 자동 지정은 요일과 상관없이 점수순, 투표는 요일을 섞는다.
+        mode: autoAssign ? "ranked" : "spread",
         earliestSlot: Math.ceil((nowMs + leadMinutes * 60 * 1000 - period.startMs) / SLOT_MS),
-        alreadyOffered: toIndexes(alreadyOffered),
+        alreadyOffered: autoAssign ? [] : toIndexes(alreadyOffered),
       });
     // 최소 여유 시간을 지키면 남는 시각이 없을 때는(주기 막바지 등) 여유 시간 없이 다시 찾는다.
-    let starts = recommend(minLeadMinutes);
-    if (starts.length === 0 && minLeadMinutes > 0) starts = recommend(0);
+    let ranked = recommend(minLeadMinutes);
+    if (ranked.length === 0 && minLeadMinutes > 0) ranked = recommend(0);
 
     // 다시 고르는 중에는 남는 시각이 없어도 일정을 끝내지 않는다. 겹치는 후보는 확정 때 충돌 검사가 막는다.
-    if (refreshing && starts.length === 0) return "unchanged";
+    if (refreshing && ranked.length === 0) return "unchanged";
 
-    if (starts.length === 0) {
+    if (ranked.length === 0) {
       // 처음 조율이면 그 주 미사용(SKIPPED), 재조정 중이면 더 잡을 시간이 없으므로 EXPIRED
-      const reason = inputsChanged ? "NO_COMMON_TIME" : "NO_AGREEMENT";
+      const reason = autoAssign || inputsChanged ? "NO_COMMON_TIME" : "NO_AGREEMENT";
       tx.update(scheduleRef, {
         ...clear,
         inputsKey,
@@ -212,26 +252,44 @@ function attempt(
       return "skipped";
     }
 
-    const next: Candidate[] = starts.map((index) => ({
-      slotId: slotIdFromMs(slotMs(period, index)),
-      start: Timestamp.fromMillis(slotMs(period, index)),
-      end: Timestamp.fromMillis(slotMs(period, index) + durationMs),
+    const next: Candidate[] = ranked.map(({ start, score, reasons }) => ({
+      slotId: slotIdFromMs(slotMs(period, start)),
+      start: Timestamp.fromMillis(slotMs(period, start)),
+      end: Timestamp.fromMillis(slotMs(period, start) + durationMs),
+      score,
+      reasons,
     }));
     const sameAsNow =
       next.length === candidates.length &&
       next.every((c, i) => c.slotId === candidates[i].slotId && c.end.toMillis() === (candidates[i].end as Timestamp).toMillis());
     if (refreshing && sameAsNow) return "unchanged";
 
-    tx.update(scheduleRef, {
+    const update = {
       candidates: next,
-      offeredSlotIds: [...alreadyOffered, ...next.map((c) => c.slotId)],
+      offeredSlotIds: autoAssign ? next.map((c) => c.slotId) : [...alreadyOffered, ...next.map((c) => c.slotId)],
       unanimous: [],
       inputsKey,
       round: round + 1,
+      // 화면이 투표 화면을 보여 줄지, 자동 지정 순위를 보여 줄지 가른다
+      assignMode,
       // 알림 문구를 가르는 데 쓴다
       recommendReason: inputsChanged ? "inputs" : refreshing ? "neighbor" : "next-round",
       updatedAt: Timestamp.now(),
-    });
+    };
+
+    if (autoAssign && confirmable) {
+      // 1위부터 차례로, 그 시간 칸에 다른 레이드가 없는 첫 후보로 이 트랜잭션에서 확정한다.
+      // 위에서 busy를 같은 트랜잭션으로 읽어 뺐으므로 보통 1위가 바로 확정된다.
+      for (const candidate of next) {
+        const slotIds = slotIdsBetween(candidate.start.toMillis(), candidate.end.toMillis());
+        if ((await readBusyConflicts(tx, db, memberUids, slotIds)).length > 0) continue;
+        writeLock(tx, db, { party, partyId, periodId, scheduleRef, candidate, memberUids, confirmedBy: "AUTO", extra: update });
+        return "auto-confirmed";
+      }
+    }
+
+    tx.update(scheduleRef, update);
+    if (autoAssign) return refreshing ? "refreshed" : confirmable ? "recommended" : "waiting-auto";
     return inputsChanged ? "recommended" : refreshing ? "refreshed" : "next-round";
   });
 }

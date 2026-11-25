@@ -88,7 +88,16 @@ export function scheduleNotifications(
   if (stateChanged) {
     switch (after.state) {
       case "LOCKED":
-        if (confirmedAt) pushes.push(push(everyone, `일정이 확정됐습니다: ${formatKst(confirmedAt)}`));
+        if (confirmedAt) {
+          pushes.push(
+            push(
+              everyone,
+              after.confirmedBy === "AUTO"
+                ? `투표 없이 점수가 가장 높은 시간으로 정했습니다: ${formatKst(confirmedAt)}`
+                : `일정이 확정됐습니다: ${formatKst(confirmedAt)}`,
+            ),
+          );
+        }
         break;
       case "VERIFYING":
         pushes.push(push(everyone, "레이드가 끝났나요? 클리어 여부를 기록해 주세요."));
@@ -118,9 +127,24 @@ export function scheduleNotifications(
     }
   }
 
+  // 자동 지정 파티의 교체: 파티장이 다른 순위 후보로 바꿈
+  const previousSlot = before.confirmed?.slotId as string | undefined;
+  if (!stateChanged && after.state === "LOCKED" && previousSlot && after.confirmed?.slotId !== previousSlot && confirmedAt) {
+    pushes.push(push(everyone, `파티장이 일정을 바꿨습니다: ${formatKst(confirmedAt)}`));
+  }
+
   // 새 추천 후보
   const candidates = (after.candidates as unknown[] | undefined) ?? [];
-  if (isOpen(after.state) && candidates.length > 0 && before.round !== after.round) {
+  if (isOpen(after.state) && candidates.length > 0 && after.assignMode === "AUTO") {
+    // 자동 지정 예정 (미리 연 다음 주): 1위가 새로 정해지거나 바뀌면 알린다. 투표는 없다.
+    const top = (list: unknown) => ((list as { slotId?: string; start?: Timestamp }[] | undefined) ?? [])[0];
+    const next = top(after.candidates);
+    const startsAt = (after.periodStart as Timestamp | undefined)?.toMillis();
+    if (next?.start && (before.assignMode !== "AUTO" || top(before.candidates)?.slotId !== next.slotId)) {
+      const when = startsAt ? `${formatKst(startsAt)}에 ` : "";
+      pushes.push(push(everyone, `${when}점수가 가장 높은 이 시간으로 자동 확정됩니다: ${formatKst(next.start.toMillis())}`));
+    }
+  } else if (isOpen(after.state) && candidates.length > 0 && before.round !== after.round) {
     const nextRound = !stateChanged && ((before.candidates as unknown[] | undefined) ?? []).length > 0 && before.inputsKey === after.inputsKey;
     pushes.push(
       push(

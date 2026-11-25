@@ -21,6 +21,7 @@ export {
   replaceWithMercenary,
   addMercenary,
   removeMercenary,
+  switchAssignedCandidate,
 } from "./callable/schedule";
 export {
   onUnavailableWrite,

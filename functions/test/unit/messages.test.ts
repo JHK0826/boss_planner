@@ -93,6 +93,37 @@ describe("scheduleNotifications", () => {
     ]);
   });
 
+  describe("투표 없이 자동 지정", () => {
+    const top = { slotId: "20261121-2100", start: Timestamp.fromMillis(kst("2026-11-21T21:00:00")) };
+    const second = { slotId: "20261122-2100", start: Timestamp.fromMillis(kst("2026-11-22T21:00:00")) };
+    const preOpened = { ...base, preOpened: true, periodStart: Timestamp.fromMillis(kst("2026-11-19T00:00:00")) };
+
+    it("바로 확정하면 자동으로 정했다고 알리고, 투표하라는 알림은 보내지 않는다", () => {
+      const locked = { ...base, state: "LOCKED", confirmed, confirmedBy: "AUTO", assignMode: "AUTO", round: 1, candidates: [candidate] };
+      expect(notify(base, locked)).toEqual([
+        expect.objectContaining({ uids: ["a", "b", "c"], body: "투표 없이 점수가 가장 높은 시간으로 정했습니다: 11/14(토) 20:00" }),
+      ]);
+    });
+
+    it("미리 연 다음 주는 1위가 정해지거나 바뀔 때 언제 확정되는지 알린다", () => {
+      const planned = { ...preOpened, assignMode: "AUTO", round: 1, candidates: [top, second], inputsKey: "k" };
+      expect(notify(preOpened, planned)).toEqual([
+        expect.objectContaining({ body: "11/19(목) 00:00에 점수가 가장 높은 이 시간으로 자동 확정됩니다: 11/21(토) 21:00" }),
+      ]);
+      // 1위가 그대로면 알리지 않는다.
+      expect(notify(planned, { ...planned, round: 2, candidates: [top] })).toEqual([]);
+      expect(notify(planned, { ...planned, round: 2, candidates: [second, top] })).toMatchObject([
+        { body: expect.stringContaining("11/22(일) 21:00") },
+      ]);
+    });
+
+    it("파티장이 다른 순위로 바꾸면 전원에게 알린다", () => {
+      const locked = { ...base, state: "LOCKED", assignMode: "AUTO", confirmed: { ...confirmed, slotId: "20261114-2000" } };
+      const switched = { ...locked, confirmedBy: "LEADER", confirmed: { slotId: "20261115-2100", start: Timestamp.fromMillis(kst("2026-11-15T21:00:00")) } };
+      expect(notify(locked, switched)).toEqual([expect.objectContaining({ uids: ["a", "b", "c"], body: "파티장이 일정을 바꿨습니다: 11/15(일) 21:00" })]);
+    });
+  });
+
   it("변경 요청은 파티장에게, 승인은 전원에게, 거절은 요청자에게 알린다", () => {
     const locked = { ...base, state: "LOCKED", confirmed };
     const pending = { ...locked, changeRequest: { requestedBy: "b", reason: "야근", status: "PENDING" } };

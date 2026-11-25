@@ -83,9 +83,12 @@ export const onScheduleStateChange = onDocumentWritten(
     if (after && before?.state !== after.state) {
       await openNextPeriod(db, event.params.partyId, after, Date.now());
     }
-    // 확정되면, 파티원이 겹치는 다른 파티 중 아직 아무도 투표하지 않은 일정은 그 시간에 맞춰 다시 추천한다.
-    // 실패해도 이 파티의 알림은 보낸다.
-    if (after?.state === "LOCKED" && (before?.state === "OPEN" || before?.state === "RETRY")) {
+    // 확정되거나 확정 시간이 바뀌면(자동 지정 교체), 파티원이 겹치는 다른 파티 중 아직 아무도 투표하지 않은
+    // 일정은 그 시간에 맞춰 다시 추천한다. 실패해도 이 파티의 알림은 보낸다.
+    const lockedNow = after?.state === "LOCKED" && (before?.state === "OPEN" || before?.state === "RETRY");
+    const switched =
+      after?.state === "LOCKED" && before?.state === "LOCKED" && before.confirmed?.slotId !== after.confirmed?.slotId;
+    if (lockedNow || switched) {
       await refreshNeighborSchedules(db, event.params.partyId, after, Date.now()).catch((error) =>
         console.error("refreshNeighborSchedules failed", (error as Error).message),
       );
