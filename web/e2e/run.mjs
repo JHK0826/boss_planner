@@ -477,6 +477,25 @@ try {
   await a.getByRole("heading", { name: "파티원 2명" }).waitFor();
   step("확정 전에는 대체를 취소할 수 있다");
 
+  // ---------- 투표 없이 자동 지정 ----------
+  await tab(a, "설정");
+  await a.getByRole("checkbox", { name: "투표 없이 자동 지정" }).check();
+  await a.getByRole("button", { name: "저장" }).click();
+  await a.getByText("추천 설정을 저장했습니다").waitFor();
+  assert.equal((await partyDoc.ref.get()).get("autoAssign"), true);
+  await tab(a, "투표");
+  // 미리 연 다음 주라 아직 확정하지 않고, 점수순 1~3위 예정을 보여 준다.
+  await a.getByText("자동 지정 예정", { exact: false }).waitFor();
+  await a.getByText("1위 · ", { exact: false }).waitFor();
+  assert.equal(await a.getByRole("button", { name: "투표하기" }).count(), 0);
+  assert.equal(await a.getByRole("button", { name: "모두 가능" }).count(), 0);
+  const planned = (await nextRef.get()).data();
+  assert.equal(planned.assignMode, "AUTO");
+  assert.equal(planned.state, "OPEN");
+  assert.ok(planned.candidates.length >= 1 && planned.candidates.every((c) => typeof c.score === "number" && Array.isArray(c.reasons)));
+  await shot(a, "17-auto-assign");
+  step("파티장이 투표 없이 자동 지정을 켜면 미리 연 다음 주는 점수순 예정 시간으로 바뀌고 투표 버튼이 없다");
+
   assert.deepEqual(errors, [], `브라우저 오류:\n${errors.join("\n")}`);
   console.log("E2E 통과");
 } catch (error) {

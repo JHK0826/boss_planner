@@ -25,7 +25,7 @@ export function CreatePartyScreen() {
   const [selected, setSelected] = useState<[string, string][]>([]);
   const [customDuration, setCustomDuration] = useState<number | null>(null);
   const [characterId, setCharacterId] = useState<string | null>(characters[0]?.id ?? null);
-  const [settings, setSettings] = useState<RecommendSettings>({ preferredWindow: null, minLeadMinutes: 180 });
+  const [settings, setSettings] = useState<RecommendSettings>({ preferredWindow: null, minLeadMinutes: 180, autoAssign: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -96,6 +96,7 @@ export function CreatePartyScreen() {
         characterId,
         preferredWindow: settings.preferredWindow,
         minLeadMinutes: settings.minLeadMinutes,
+        autoAssign: settings.autoAssign,
       });
       toast("파티를 만들었습니다. 초대 코드를 파티원에게 보내 주세요");
       navigate(`/parties/${partyId}`, { replace: true });

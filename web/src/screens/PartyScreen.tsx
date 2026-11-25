@@ -241,6 +241,18 @@ function ConfirmDialog({
           </p>
         </Dialog>
       );
+    case "switchCandidate":
+      return (
+        <Dialog
+          title="다른 순위로 바꾸기"
+          onClose={onClose}
+          actions={ok("바꾸기", "일정을 바꿨습니다", () => api.switchAssignedCandidate(partyId, schedule!.id, confirm.index))}
+        >
+          <p style={{ margin: 0 }}>
+            {confirm.label}로 바꿀까요? 파티원에게 알림이 갑니다. 파티원이 속한 다른 파티 일정과 겹치면 바뀌지 않습니다.
+          </p>
+        </Dialog>
+      );
     case "requestChange":
       return (
         <Dialog

@@ -21,6 +21,7 @@ const party = (leader = "a", started = true): Party => ({
   scheduleStarted: started,
   preferredWindow: null,
   minLeadMinutes: 180,
+  autoAssign: false,
 });
 
 function schedule(o: Partial<Schedule> & { candidateCount?: number; confirmedAt?: number } = {}): Schedule {
@@ -33,7 +34,13 @@ function schedule(o: Partial<Schedule> & { candidateCount?: number; confirmedAt?
     inputDeadlineMs: start + 24 * hour,
     durationSlots: 2,
     round: 1,
-    candidates: Array.from({ length: candidateCount }, (_, i) => ({ slotId: `s${i}`, startMs: start + i * hour, endMs: start + (i + 1) * hour })),
+    candidates: Array.from({ length: candidateCount }, (_, i) => ({
+      slotId: `s${i}`,
+      startMs: start + i * hour,
+      endMs: start + (i + 1) * hour,
+      score: null,
+      reasons: [],
+    })),
     unanimous: [],
     skippedReason: null,
     confirmed: confirmedAt !== undefined ? { startMs: confirmedAt, endMs: confirmedAt + hour, memberUids: ["a", "b"] } : null,
@@ -42,6 +49,8 @@ function schedule(o: Partial<Schedule> & { candidateCount?: number; confirmedAt?
     mercenaries: [],
     expiredReason: null,
     settlement: null,
+    assignMode: "VOTE",
+    confirmedBy: null,
     ...rest,
   };
 }
@@ -165,13 +174,27 @@ describe("partyStatus", () => {
     const upcoming = schedule({ periodStartMs: now + 24 * hour, periodEndMs: now + 8 * 24 * hour });
     const settled = schedule({ id: "W-0", state: "SETTLED" });
     expect(status("a", snapshot([upcoming, settled]))).toMatchObject(s("다음 주 불가 시간 입력", true));
-    const voting = { ...upcoming, round: 2, candidates: [{ slotId: "x", startMs: 0, endMs: 0 }] };
+    const voting = { ...upcoming, round: 2, candidates: [{ slotId: "x", startMs: 0, endMs: 0, score: null, reasons: [] }] };
     expect(status("a", snapshot([voting], { submitted: ["a", "b"] }))).toMatchObject(s("다음 주 투표", true));
     const agreed = { ...voting, unanimous: [0] };
     const both = { submitted: ["a", "b"], votedRound: { a: 2, b: 2 } };
     // 파티장도 아직 확정할 수 없다.
     expect(status("a", snapshot([agreed], both))).toMatchObject(s("다음 주 전원 동의 · 목요일부터 확정 가능", false));
     expect(tabTodos(status("a", snapshot([upcoming])))).toEqual({ vote: true, settlement: false });
+  });
+
+  it("투표 없이 자동 지정하는 일정은 투표·확정 할 일이 없고, 미리 연 다음 주면 1위 예정 시간을 보여 준다", () => {
+    const plannedStart = now + 3 * 24 * hour;
+    const upcoming = schedule({
+      periodStartMs: now + 24 * hour,
+      periodEndMs: now + 8 * 24 * hour,
+      assignMode: "AUTO",
+      round: 2,
+      candidates: [{ slotId: "x", startMs: plannedStart, endMs: plannedStart + hour, score: 5, reasons: [] }],
+    });
+    expect(status("a", snapshot([upcoming], { submitted: ["a", "b"] }))).toMatchObject(s(`자동 지정 예정 ${dateTime(plannedStart)}`, false));
+    expect(status("b", snapshot([upcoming], { submitted: ["a"] }))).toMatchObject(s("다음 주 불가 시간 입력", true));
+    expect(tabTodos(status("a", snapshot([upcoming], { submitted: ["a", "b"] })))).toEqual({ vote: false, settlement: false });
   });
 
   it("이번 주 일정과 미리 연 다음 주 일정을 나눈다", () => {

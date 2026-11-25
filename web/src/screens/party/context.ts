@@ -12,7 +12,8 @@ export type Confirm =
   | { kind: "requestChange" }
   | { kind: "mercenaryReplace" }
   | { kind: "mercenaryAdd" }
-  | { kind: "mercenaryRemove"; mercenary: Mercenary };
+  | { kind: "mercenaryRemove"; mercenary: Mercenary }
+  | { kind: "switchCandidate"; index: number; label: string };
 
 export interface PartyContextValue {
   uid: string;

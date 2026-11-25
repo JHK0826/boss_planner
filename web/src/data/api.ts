@@ -271,6 +271,7 @@ export async function createParty(input: {
   characterId: string;
   preferredWindow: PreferredWindow | null;
   minLeadMinutes: number;
+  autoAssign: boolean;
 }): Promise<string> {
   const { preferredWindow, ...rest } = input;
   const result = await call<{ partyId?: string }>("createParty", preferredWindow ? { ...rest, preferredWindow } : rest);
@@ -338,8 +339,16 @@ export const removeMercenary = (partyId: string, periodId: string, mercenaryId: 
 export const startSchedule = (partyId: string) => call("startSchedule", { partyId });
 
 /** 파티장이 추천 설정을 바꾼다. 선호 시간대를 없앨 때는 null을 보낸다. 조율 중이면 서버가 후보를 다시 계산한다. */
-export const updatePartyPreferences = (partyId: string, preferredWindow: PreferredWindow | null, minLeadMinutes: number) =>
-  call("updatePartyPreferences", { partyId, preferredWindow, minLeadMinutes });
+export const updatePartyPreferences = (
+  partyId: string,
+  preferredWindow: PreferredWindow | null,
+  minLeadMinutes: number,
+  autoAssign: boolean,
+) => call("updatePartyPreferences", { partyId, preferredWindow, minLeadMinutes, autoAssign });
+
+/** 투표 없이 자동으로 정한 일정을 파티장이 다른 순위 후보로 바꾼다 (레이드 4시간 전까지). */
+export const switchAssignedCandidate = (partyId: string, periodId: string, candidateIndex: number) =>
+  call("switchAssignedCandidate", { partyId, periodId, candidateIndex });
 
 export const leaveParty = (partyId: string) => call("leaveParty", { partyId });
 

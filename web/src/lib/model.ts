@@ -46,12 +46,18 @@ export interface Party {
   scheduleStarted: boolean;
   preferredWindow: PreferredWindow | null;
   minLeadMinutes: number;
+  /** 투표 없이 점수 1위 시간으로 자동 지정 */
+  autoAssign: boolean;
 }
 
 export interface Candidate {
   slotId: string;
   startMs: number;
   endMs: number;
+  /** 추천 점수. 예전 후보에는 없다 */
+  score: number | null;
+  /** 추천 이유 코드 (lib/recommendReasons.ts가 문구로 바꾼다) */
+  reasons: string[];
 }
 
 /** memberUids: 확정 당시 파티원 = 이 레이드에 참여한 사람 */
@@ -104,7 +110,14 @@ export interface Schedule {
   expiredReason: string | null;
   settlement: Settlement | null;
   mercenaries: Mercenary[];
+  /** 후보를 고른 방식: VOTE(투표) 또는 AUTO(투표 없이 자동 지정, 후보는 점수순) */
+  assignMode: "VOTE" | "AUTO";
+  /** 누가 확정했는가: LEADER(파티장) 또는 AUTO(자동 지정). 확정 전이면 null */
+  confirmedBy: string | null;
 }
+
+/** 투표 없이 자동 지정하는 일정 (후보가 점수순 순위다) */
+export const isAutoAssigned = (schedule: Schedule | null | undefined): boolean => schedule?.assignMode === "AUTO";
 
 /** 그 주기에 참여하는 파티원 (용병으로 대체한 사람 제외). 일정이 없으면 파티원 전원 */
 export const participantUids = (party: Party, schedule: Schedule | null | undefined): string[] =>

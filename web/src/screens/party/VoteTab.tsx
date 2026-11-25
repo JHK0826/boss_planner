@@ -3,7 +3,18 @@
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as api from "../../data/api";
-import { acceptsInput, isReplaced, participantUids, type Confirmed, type Party, type Schedule, type Vote } from "../../lib/model";
+import {
+  acceptsInput,
+  isAutoAssigned,
+  isReplaced,
+  participantUids,
+  type Candidate,
+  type Confirmed,
+  type Party,
+  type Schedule,
+  type Vote,
+} from "../../lib/model";
+import { reasonText } from "../../lib/recommendReasons";
 import { currentPeriodSchedule, isUpcoming } from "../../lib/partyStatus";
 import { changeRequestDeadline, dateTime, dayLabel, dayWithWeekday, range, time, weekdayLabel } from "../../lib/time";
 import { Loading } from "../../ui/common";
@@ -32,7 +43,9 @@ export function VoteTab() {
             {weekdayLabel(schedule.periodEndMs - 1)})) 미리 조율
           </h2>
           <p className="small muted" style={{ margin: 0 }}>
-            이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간 입력과 투표를 먼저 하고, 확정은 목요일 00:00부터 할 수 있습니다.
+            {party.autoAssign
+              ? "이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간을 먼저 내 두면 목요일 00:00에 투표 없이 점수 1위 시간으로 확정합니다."
+              : "이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간 입력과 투표를 먼저 하고, 확정은 목요일 00:00부터 할 수 있습니다."}
           </p>
         </>
       ) : (
@@ -192,11 +205,15 @@ function ScheduleSection({
           <p className="small" style={{ margin: 0 }}>
             {replaced
               ? "이번 주기는 용병으로 대체했습니다. 나머지 파티원이 조율합니다. 파티 탭에서 대체를 취소할 수 있습니다."
-              : mySubmitted
-                ? "전원이 제출하면 추천 시간이 나옵니다."
-                : "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."}
+              : !mySubmitted
+                ? "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."
+                : party.autoAssign
+                  ? "전원이 제출하면 투표 없이 점수가 가장 높은 시간으로 자동으로 정해집니다."
+                  : "전원이 제출하면 추천 시간이 나옵니다."}
           </p>
         </>
+      ) : isAutoAssigned(schedule) ? (
+        <AutoPlan schedule={schedule} />
       ) : (
         <CandidateVoting
           // 후보가 바뀌거나(round) 저장된 투표가 바뀌면 선택을 처음부터 다시 한다.
@@ -214,6 +231,80 @@ function ScheduleSection({
           onAsk={onAsk}
         />
       )}
+    </div>
+  );
+}
+
+/** 순위 후보 한 줄: "1위 · 11/21(토) 21:00 ~ 22:00" + 이유 */
+function RankedCandidate({ rank, candidate, children }: { rank: number; candidate: Candidate; children?: ReactNode }) {
+  const why = reasonText(candidate.reasons);
+  return (
+    <div className="row" style={{ alignItems: "flex-start" }}>
+      <div className="grow stack" style={{ gap: 0 }}>
+        <span style={{ fontWeight: rank === 1 ? 700 : 500 }}>
+          {rank}위 · {range(candidate.startMs, candidate.endMs)}
+        </span>
+        {why && <span className="small muted">{why}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 투표 없이 자동 지정: 미리 연 다음 주라 아직 확정하지 않고 예정만 보여 준다.
+ * 주기가 시작하면(목요일 00:00) 1위가 다른 레이드와 겹치지 않는 한 1위로 확정된다.
+ */
+function AutoPlan({ schedule }: { schedule: Schedule }) {
+  const upcoming = schedule.periodStartMs > Date.now();
+  return (
+    <div className="card stack" style={{ gap: 6 }}>
+      <span className="small muted">
+        {upcoming ? `자동 지정 예정 · ${dateTime(schedule.periodStartMs)}에 확정` : "자동 지정 중"}
+      </span>
+      {schedule.candidates.map((candidate, index) => (
+        <RankedCandidate key={candidate.slotId} rank={index + 1} candidate={candidate} />
+      ))}
+      <span className="small" style={{ marginTop: 4 }}>
+        투표 없이 점수가 가장 높은 시간으로 정합니다. 불가 시간을 고치면 다시 계산합니다.
+      </span>
+    </div>
+  );
+}
+
+/** 자동으로 정한 일정을 파티장이 다른 순위로 바꾸는 목록 (변경 요청 마감 = 레이드 4시간 전까지) */
+function SwitchCandidates({
+  schedule,
+  confirmed,
+  now,
+  busy,
+  onAsk,
+}: {
+  schedule: Schedule;
+  confirmed: Confirmed;
+  now: number;
+  busy: boolean;
+  onAsk: (confirm: Confirm) => void;
+}) {
+  const others = schedule.candidates.map((candidate, index) => ({ candidate, index })).filter(({ candidate }) => candidate.startMs !== confirmed.startMs);
+  if (others.length === 0) return null;
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <span className="small muted">다른 순위로 바꾸기 (레이드 4시간 전까지)</span>
+      {others.map(({ candidate, index }) => {
+        const tooSoon = now >= changeRequestDeadline(candidate.startMs);
+        return (
+          <RankedCandidate key={candidate.slotId} rank={index + 1} candidate={candidate}>
+            <button
+              className="btn-outline"
+              disabled={busy || tooSoon}
+              onClick={() => onAsk({ kind: "switchCandidate", index, label: range(candidate.startMs, candidate.endMs) })}
+            >
+              {tooSoon ? "4시간 안" : "이 시간으로"}
+            </button>
+          </RankedCandidate>
+        );
+      })}
     </div>
   );
 }
@@ -316,17 +407,26 @@ function LockedSchedule({
       </>
     );
   }
+  const auto = isAutoAssigned(schedule);
+  const chosen = schedule.candidates.find((candidate) => candidate.startMs === confirmed.startMs);
+  const why = chosen ? reasonText(chosen.reasons) : "";
   return (
     <div className="stack">
       <div className="card stack" style={{ gap: 2 }}>
-        <span className="small muted">확정된 시간</span>
+        <span className="small muted">
+          {!auto ? "확정된 시간" : schedule.confirmedBy === "AUTO" ? "투표 없이 자동으로 정한 시간" : "파티장이 순위에서 고른 시간"}
+        </span>
         <span style={{ fontSize: 20, fontWeight: 600 }}>{range(confirmed.startMs, confirmed.endMs)}</span>
+        {auto && why && <span className="small muted">{why}</span>}
         {schedule.mercenaries.length > 0 && (
           <span className="small muted">
             참여: 파티원 {confirmed.memberUids.length}명 + 용병 {schedule.mercenaries.length}명
           </span>
         )}
       </div>
+      {auto && isLeader && schedule.state === "LOCKED" && now < changeRequestDeadline(confirmed.startMs) && (
+        <SwitchCandidates schedule={schedule} confirmed={confirmed} now={now} busy={busy} onAsk={onAsk} />
+      )}
       {body}
     </div>
   );
@@ -407,6 +507,12 @@ function CandidateVoting({
                 <span className={`small ${unanimous ? "primary-text" : "muted"}`}>
                   {unanimous ? "전원 동의" : `동의 ${currentVotes.filter((v) => v.agreed.includes(index)).length}/${memberCount}명`}
                 </span>
+                {candidate.reasons.length > 0 && reasonText(candidate.reasons) && (
+                  <>
+                    <br />
+                    <span className="small muted">{reasonText(candidate.reasons)}</span>
+                  </>
+                )}
               </span>
               {unanimous && isLeader && !early && (
                 <button

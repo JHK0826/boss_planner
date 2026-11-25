@@ -34,6 +34,8 @@ export function CharacterPicker({
 export interface RecommendSettings {
   preferredWindow: PreferredWindow | null;
   minLeadMinutes: number;
+  /** 투표 없이 점수 1위 시간으로 자동 지정 */
+  autoAssign: boolean;
 }
 
 /** 선호 시간대를 처음 켰을 때의 값: 매일 21:00 ~ 24:00 */
@@ -50,11 +52,11 @@ export const LEAD_CHOICES: [number, string][] = [
 const dayChoiceLabel = (days: number[]) =>
   DAY_CHOICES.find(([, d]) => d.join() === [...days].sort().join())?.[0] ?? [...days].sort().map((d) => "월화수목금토일"[d - 1]).join("·");
 
-/** "매일 21:00~24:00 선호 · 여유 3시간" */
-export function recommendSettingsSummary(window: PreferredWindow | null, minLeadMinutes: number): string {
+/** "매일 21:00~24:00 선호 · 여유 3시간 · 투표 없이 자동 지정" */
+export function recommendSettingsSummary(window: PreferredWindow | null, minLeadMinutes: number, autoAssign = false): string {
   const preferred = window ? `${dayChoiceLabel(window.days)} ${rowLabel(window.startRow)}~${rowLabel(window.endRow)} 선호` : "선호 시간대 없음";
   const lead = LEAD_CHOICES.find(([m]) => m === minLeadMinutes)?.[1] ?? `${minLeadMinutes}분`;
-  return `${preferred} · 여유 ${lead}`;
+  return `${preferred} · 여유 ${lead} · ${autoAssign ? "투표 없이 자동 지정" : "투표로 확정"}`;
 }
 
 /**
@@ -146,6 +148,21 @@ export function RecommendSettingsEditor({
         disabled={disabled}
       />
       <p className="small muted">추천을 계산하는 시점으로부터 이 시간 안에 시작하는 시각은 추천하지 않습니다.</p>
+      <label className="row">
+        <h3 className="grow">투표 없이 자동 지정</h3>
+        <input
+          type="checkbox"
+          className="switch"
+          aria-label="투표 없이 자동 지정"
+          checked={settings.autoAssign}
+          disabled={disabled}
+          onChange={() => onChange({ ...settings, autoAssign: !settings.autoAssign })}
+        />
+      </label>
+      <p className="small muted">
+        전원이 불가 시간을 내면 투표 없이 점수 1위 시간으로 바로 확정합니다. 미리 연 다음 주는 목요일 00:00에 확정합니다. 파티장은
+        레이드 4시간 전까지 다른 순위로 바꿀 수 있습니다.
+      </p>
     </div>
   );
 }
