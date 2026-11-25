@@ -31,6 +31,10 @@ import com.bossplanner.app.data.RoutineRepository
 import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.userMessage
 import com.google.firebase.firestore.FirebaseFirestoreException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -169,8 +173,9 @@ fun UnavailableScreen(
                     error = null
                     scope.launch {
                         try {
-                            parties.setUnavailable(partyId, target.periodId, uid, slots, submitted = true)
-                            val others = if (applyToOthers) submitToOtherParties(parties, otherParties, target, uid, slots) else 0
+                            val others = submitUnavailable(
+                                parties, partyId, target, uid, slots, if (applyToOthers) otherParties else emptyList(),
+                            )
                             showMessage.show(
                                 if (others > 0) "불가 시간을 제출했습니다 (다른 파티 ${others}곳에도 제출)" else "불가 시간을 제출했습니다",
                             )
@@ -195,26 +200,48 @@ fun UnavailableScreen(
 }
 
 /**
- * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출하고, 제출한 파티 수를 돌려준다.
- * 주기가 다른 파티(주간 ↔ 월간), 이미 확정된 파티, 그 주기를 용병으로 대체한 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
+ * 이 파티에 불가 시간을 제출하고, otherParties 중 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 시간을 제출한다.
+ * 주기가 다른 파티(주간 ↔ 월간), 이미 확정된 파티, 그 주기를 용병으로 대체한 파티는 건너뛴다.
+ *
+ * 모든 문서를 한 번의 batch로 써서 같은 순간에 생기게 한다 (자동 지정 파티끼리의 순서). batch가 막히면(그 사이 한 파티가
+ * 확정됨 등) 이 파티를 먼저 쓰고 나머지를 하나씩 쓴다. 이 파티가 실패하면 예외를 던지고, 다른 파티가 실패하면 건너뛴다.
+ * @return 함께 제출한 다른 파티 수
  */
-private suspend fun submitToOtherParties(
+private suspend fun submitUnavailable(
     parties: PartyRepository,
-    otherParties: List<Party>,
+    partyId: String,
     target: UnavailableTarget,
     uid: String,
     slots: List<String>,
+    otherParties: List<Party>,
 ): Int {
-    var submitted = 0
-    for (party in otherParties) {
-        try {
-            val schedule = parties.latestScheduleOnce(party.id) ?: continue
-            val samePeriod = schedule.periodStartMs == target.periodStartMs && schedule.periodEndMs == target.periodEndMs
-            if (schedule.acceptsInput && samePeriod && !schedule.isReplaced(uid)) {
-                parties.setUnavailable(party.id, schedule.id, uid, slots, submitted = true)
-                submitted++
+    val others = coroutineScope {
+        otherParties.map { party ->
+            async {
+                try {
+                    val schedule = parties.latestScheduleOnce(party.id) ?: return@async null
+                    val samePeriod = schedule.periodStartMs == target.periodStartMs && schedule.periodEndMs == target.periodEndMs
+                    if (schedule.acceptsInput && samePeriod && !schedule.isReplaced(uid)) party.id to schedule.id else null
+                } catch (e: Exception) {
+                    null
+                }
             }
+        }.awaitAll().filterNotNull()
+    }
+    try {
+        parties.submitUnavailableBatch(listOf(partyId to target.periodId) + others, uid, slots)
+        return others.size
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+    }
+    parties.setUnavailable(partyId, target.periodId, uid, slots, submitted = true)
+    var submitted = 0
+    for ((otherId, periodId) in others) {
+        try {
+            parties.setUnavailable(otherId, periodId, uid, slots, submitted = true)
+            submitted++
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             // 이 파티는 건너뛴다. 그 파티 화면에서 따로 제출할 수 있다.
         }
     }

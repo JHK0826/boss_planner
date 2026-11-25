@@ -1028,12 +1028,24 @@ private fun RankedCandidate(rank: Int, candidate: Candidate, action: (@Composabl
 @Composable
 private fun AutoPlan(schedule: Schedule) {
     val upcoming = schedule.periodStartMs > System.currentTimeMillis()
+    // 다른 파티 이름은 이 파티원 모두가 볼 수 있는 정보가 아니라 쓰지 않는다.
+    val deferred = !upcoming && schedule.autoDeferredAtMs != null
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                if (upcoming) "자동 지정 예정 · ${TimeSlots.dateTime(schedule.periodStartMs)}에 확정" else "자동 지정 중",
+                when {
+                    upcoming -> "자동 지정 예정 · ${TimeSlots.dateTime(schedule.periodStartMs)}에 확정"
+                    deferred -> "자동 지정 대기"
+                    else -> "자동 지정 중"
+                },
                 style = MaterialTheme.typography.labelMedium,
             )
+            if (deferred) {
+                Text(
+                    "같은 파티원이 있는 다른 파티가 먼저 정하는 중입니다. 정해지면 그 시간을 피해 바로 확정합니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             schedule.candidates.forEachIndexed { index, candidate -> RankedCandidate(index + 1, candidate) }
             Text("투표 없이 점수가 가장 높은 시간으로 정합니다. 불가 시간을 고치면 다시 계산합니다.", style = MaterialTheme.typography.bodySmall)
         }

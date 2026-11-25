@@ -136,5 +136,6 @@ export function toSchedule(id: string, data: DocumentData | undefined): Schedule
     mercenaries,
     assignMode: data.assignMode === "AUTO" ? "AUTO" : "VOTE",
     confirmedBy: str(data.confirmedBy),
+    autoDeferredAtMs: millis(data.autoDeferredAt),
   };
 }

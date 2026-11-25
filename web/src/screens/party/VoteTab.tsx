@@ -257,11 +257,16 @@ function RankedCandidate({ rank, candidate, children }: { rank: number; candidat
  */
 function AutoPlan({ schedule }: { schedule: Schedule }) {
   const upcoming = schedule.periodStartMs > Date.now();
+  // 다른 파티 이름은 이 파티원 모두가 볼 수 있는 정보가 아니라 쓰지 않는다.
+  const deferred = !upcoming && schedule.autoDeferredAtMs !== null;
   return (
     <div className="card stack" style={{ gap: 6 }}>
       <span className="small muted">
-        {upcoming ? `자동 지정 예정 · ${dateTime(schedule.periodStartMs)}에 확정` : "자동 지정 중"}
+        {upcoming ? `자동 지정 예정 · ${dateTime(schedule.periodStartMs)}에 확정` : deferred ? "자동 지정 대기" : "자동 지정 중"}
       </span>
+      {deferred && (
+        <span className="small">같은 파티원이 있는 다른 파티가 먼저 정하는 중입니다. 정해지면 그 시간을 피해 바로 확정합니다.</span>
+      )}
       {schedule.candidates.map((candidate, index) => (
         <RankedCandidate key={candidate.slotId} rank={index + 1} candidate={candidate} />
       ))}

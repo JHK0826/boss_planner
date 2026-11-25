@@ -53,6 +53,10 @@ export function newScheduleData(
     retryCount: 0,
     clearedBy: null,
     expiredReason: null,
+    // 투표 없이 자동 지정: 같은 파티원이 있는, 우선순위가 더 높은 자동 지정 파티(autoDeferredFor)가 먼저 확정하도록
+    // 확정을 미룬 시각. 그 파티가 조율을 끝내면 깨어나고, 5분이 넘으면 정리 작업이 우선순위 없이 확정한다.
+    autoDeferredAt: null,
+    autoDeferredFor: null,
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   };

@@ -5,6 +5,7 @@ import { REGION, TIME_ZONE } from "./config";
 import { isMercenaryId } from "./domain/mercenary";
 import { messageNotification, scheduleNotifications, settlementNotifications } from "./notify/messages";
 import { runInputDeadlineCheck, sendPushes, toPartyInfo } from "./notify/send";
+import { releaseStaleDeferrals, wakeDeferredNeighbors } from "./schedule/autoWake";
 import { resolveRaidResult, runDailyClearCheck } from "./schedule/clear";
 import { evaluateSchedule } from "./schedule/evaluate";
 import { openNextPeriod, openSchedules } from "./schedule/open";
@@ -57,6 +58,8 @@ export const monthlyOpen = onSchedule({ schedule: "0 0 1 * *", timeZone: TIME_ZO
 /** 30분마다: 예정 시각이 지난 일정을 VERIFYING으로, 주기가 끝난 미확정 일정을 종료로 */
 export const scheduleSweep = onSchedule({ schedule: "*/30 * * * *", timeZone: TIME_ZONE, region: REGION }, async () => {
   await sweepSchedules(getFirestore(), Date.now());
+  // 다른 자동 지정 파티를 기다리다 5분 넘게 멈춘 일정은 우선순위를 보지 않고 확정한다.
+  await releaseStaleDeferrals(getFirestore(), Date.now());
 });
 
 /** 매일 05:00 KST: 직접 기록이 없는 일정을 NEXON API로 확인, 30일 지난 캐릭터 목록 갱신 */
@@ -91,6 +94,14 @@ export const onScheduleStateChange = onDocumentWritten(
     if (lockedNow || switched) {
       await refreshNeighborSchedules(db, event.params.partyId, after, Date.now()).catch((error) =>
         console.error("refreshNeighborSchedules failed", (error as Error).message),
+      );
+    }
+    // 조율이 끝나면(확정·미사용·종료) 이 파티 때문에 확정을 미뤘던 다른 자동 지정 파티를 깨운다.
+    const wasOpen = before?.state === "OPEN" || before?.state === "RETRY";
+    const isOpen = after?.state === "OPEN" || after?.state === "RETRY";
+    if (after && wasOpen && !isOpen) {
+      await wakeDeferredNeighbors(db, event.params.partyId, after, Date.now()).catch((error) =>
+        console.error("wakeDeferredNeighbors failed", (error as Error).message),
       );
     }
     const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());

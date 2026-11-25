@@ -74,6 +74,8 @@ data class Schedule(
     val assignMode: String = "VOTE",
     /** 누가 확정했는가: LEADER 또는 AUTO. 확정 전이면 null */
     val confirmedBy: String? = null,
+    /** 투표 없이 자동 지정: 같은 파티원이 있는, 우선순위가 더 높은 다른 자동 지정 파티를 기다리며 확정을 미룬 시각. 아니면 null */
+    val autoDeferredAtMs: Long? = null,
 ) {
     /** 투표 없이 자동 지정하는 일정 (후보가 점수순 순위다) */
     val isAutoAssigned: Boolean get() = assignMode == "AUTO"
