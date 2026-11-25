@@ -14,6 +14,15 @@
   --error: #b3261e;
   --error-container: #f9dedc;
   --scrim: rgba(0, 0, 0, 0.4);
+  /* 시간표 타임라인의 파티 색 (막대 배경과 그 위 글자) */
+  --party-1: #6750a4;
+  --party-2: #00677f;
+  --party-3: #9c4a12;
+  --party-4: #386a20;
+  --party-5: #8e4585;
+  --party-6: #45618a;
+  --on-party: #ffffff;
+  --routine-opacity: 1;
   --radius: 12px;
   --tab-height: 64px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -35,6 +44,15 @@
   --error: #f2b8b5;
   --error-container: #8c1d18;
   --scrim: rgba(0, 0, 0, 0.6);
+  --party-1: #d0bcff;
+  --party-2: #5fd4fd;
+  --party-3: #ffb68e;
+  --party-4: #9cd67d;
+  --party-5: #ffadeb;
+  --party-6: #adc6ff;
+  --on-party: #1d1b20;
+  /* 다크의 error-container는 진해서 고정 불가 시간 바탕을 옅게 */
+  --routine-opacity: 0.45;
 }
 
 * { box-sizing: border-box; }
@@ -171,6 +189,27 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 .grid .cell.past { opacity: 0.4; }
 .legend { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.legend i.dot { border-radius: 50%; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+
+/* 시간표 탭: 요일이 줄, 가로축이 시각인 확정 일정 타임라인 */
+.timeline { display: grid; grid-template-columns: 40px minmax(0, 1fr); row-gap: 4px; font-size: 11px; }
+.timeline-ticks { position: relative; height: 16px; color: var(--on-surface-variant); }
+.timeline-ticks span { position: absolute; transform: translateX(-50%); }
+.timeline-day { color: var(--on-surface-variant); line-height: 1.15; align-self: center; }
+.timeline-day b { color: var(--on-surface); font-weight: 600; }
+.timeline-day.today b { color: var(--primary); }
+.timeline-row { position: relative; height: 34px; background: var(--surface-variant); border-radius: 6px; overflow: hidden; }
+.timeline-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--surface); }
+.timeline-routine { position: absolute; top: 0; bottom: 0; background: var(--error-container); opacity: var(--routine-opacity); }
+.timeline-break { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, var(--surface) 0 3px, transparent 3px 6px); }
+.timeline-bar { position: absolute; top: 3px; bottom: 3px; display: flex; align-items: center; gap: 2px; padding: 0 2px; border: 0; border-radius: 5px;
+  color: var(--on-party); font-size: 11px; font-weight: 600; overflow: hidden; cursor: pointer; }
+.timeline-bar.past { opacity: 0.45; }
+.timeline-bar img, .timeline-boss-letter { width: 24px; height: 24px; border-radius: 4px; object-fit: cover; flex: none; background: rgba(0, 0, 0, 0.12); }
+.timeline-boss-letter { display: grid; place-items: center; }
+.timeline-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.timeline-now { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--error); }
 
 .banner { background: var(--primary-container); color: var(--on-primary-container); border-radius: var(--radius); padding: 12px 14px; }
 
