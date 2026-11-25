@@ -1,4 +1,14 @@
 // Firestore 문서를 화면에서 쓰기 좋게 옮긴 타입. Android 앱(app/.../data/PartyModels.kt, Models.kt)과 같은 구조다.
+import {
+  MAX_PARTY_SIZE,
+  activeMemberUids,
+  canCancelReplacement,
+  extraMercenaryCount,
+  isMercenaryId,
+  mercenaryEditable,
+  mercenaryLabel,
+  replacedUids,
+} from "@shared/domain/mercenary";
 
 export interface PartyBoss {
   name: string;
@@ -66,6 +76,13 @@ export interface Settlement {
   completed: boolean;
 }
 
+/** 이번 주기 용병. replaces가 있으면 그 파티원을 대체한 용병, null이면 파티장이 추가한 임시 용병 */
+export interface Mercenary {
+  id: string;
+  name: string;
+  replaces: string | null;
+}
+
 export type ScheduleState = "OPEN" | "LOCKED" | "VERIFYING" | "SETTLED" | "RETRY" | "EXPIRED" | "SKIPPED";
 
 export interface Schedule {
@@ -86,7 +103,30 @@ export interface Schedule {
   retryCount: number;
   expiredReason: string | null;
   settlement: Settlement | null;
+  mercenaries: Mercenary[];
 }
+
+/** 그 주기에 참여하는 파티원 (용병으로 대체한 사람 제외). 일정이 없으면 파티원 전원 */
+export const participantUids = (party: Party, schedule: Schedule | null | undefined): string[] =>
+  schedule ? activeMemberUids(party.memberUids, schedule.mercenaries) : party.memberUids;
+
+/** 그 주기에 용병으로 대체했는지 */
+export const isReplaced = (schedule: Schedule | null | undefined, uid: string): boolean =>
+  !!schedule && replacedUids(schedule.mercenaries).has(uid);
+
+/** 내 대체 용병 */
+export const myReplacement = (schedule: Schedule | null | undefined, uid: string): Mercenary | undefined =>
+  schedule?.mercenaries.find((merc) => merc.replaces === uid);
+
+/** 용병 표시 이름: "용병 2", "용병 (비숍 대신)" */
+export const mercenaryDisplayName = (party: Party, merc: Mercenary): string =>
+  mercenaryLabel(merc, merc.replaces ? memberLabel(party.members[merc.replaces]) : undefined);
+
+/** 용병을 대체·추가·빼기 할 수 있는 때: 확정 전, 또는 확정 후 레이드 시작 전 */
+export const canEditMercenaries = (schedule: Schedule, nowMs: number): boolean =>
+  mercenaryEditable(schedule.state, schedule.confirmed?.startMs ?? null, nowMs);
+
+export { MAX_PARTY_SIZE, canCancelReplacement, extraMercenaryCount, isMercenaryId };
 
 /** 불가 시간 입력·투표·확정을 받는 상태 (처음 조율 또는 미클리어 후 재조정) */
 export const acceptsInput = (schedule: Schedule): boolean => schedule.state === "OPEN" || schedule.state === "RETRY";

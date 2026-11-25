@@ -2,6 +2,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { REGION, TIME_ZONE } from "./config";
+import { isMercenaryId } from "./domain/mercenary";
 import { messageNotification, scheduleNotifications, settlementNotifications } from "./notify/messages";
 import { runInputDeadlineCheck, sendPushes, toPartyInfo } from "./notify/send";
 import { resolveRaidResult, runDailyClearCheck } from "./schedule/clear";
@@ -34,6 +35,9 @@ export const onClearWrite = onDocumentWritten(
     if (result !== "CLEARED" && result !== "NOT_CLEARED") return;
     const db = getFirestore();
     const scheduleRef = db.doc(`parties/${event.params.partyId}/schedules/${event.params.periodId}`);
+    // 용병으로 대체해 레이드에 가지 않은 사람의 기록은 무시한다.
+    const participants = (await scheduleRef.get()).get("confirmed.memberUids") as string[] | undefined;
+    if (participants && !participants.includes(event.params.uid)) return;
     await resolveRaidResult(db, scheduleRef, result === "CLEARED", "MANUAL", Date.now());
   },
 );
@@ -104,7 +108,8 @@ export const onSettlementWrite = onDocumentWritten(
     ]);
     const party = toPartyInfo(partySnap);
     const sellerUid = scheduleSnap.get("settlement.sellerUid") as string | undefined;
-    if (!party || !sellerUid) return;
+    // 용병 몫은 판매자가 직접 지급하고 끝내므로 알릴 사람이 없다.
+    if (!party || !sellerUid || isMercenaryId(event.params.uid)) return;
     await sendPushes(
       db,
       settlementNotifications(party, sellerUid, event.params.uid, event.data?.before.data(), event.data?.after.data()),

@@ -9,6 +9,7 @@ import {
   validateBossSelection,
   type PartyBoss,
 } from "../domain/bosses";
+import { MAX_PARTY_SIZE, activeMemberUids, extraMercenaryCount, type MercenaryLike } from "../domain/mercenary";
 import { currentPeriod, isCycleStartDay, startOfKstDay, type Cycle } from "../domain/time";
 import { evaluateSchedule } from "../schedule/evaluate";
 import {
@@ -19,7 +20,7 @@ import {
   type PreferredWindow,
 } from "../schedule/model";
 
-export const MAX_PARTY_SIZE = 6;
+export { MAX_PARTY_SIZE };
 export const MAX_DURATION_MINUTES = MAX_BOSSES_PER_PARTY * MINUTES_PER_BOSS;
 
 const BOSS_ERRORS: Record<string, string> = {
@@ -258,11 +259,13 @@ export async function joinParty(db: Firestore, uid: string, data: Data, nowMs: n
     if (memberUids.includes(uid)) {
       throw new HttpsError("already-exists", "이미 가입한 파티입니다.", { reason: "already-member" });
     }
-    if (memberUids.length >= MAX_PARTY_SIZE) {
-      throw new HttpsError("failed-precondition", `파티 정원(${MAX_PARTY_SIZE}명)이 찼습니다.`, { reason: "full" });
-    }
     const period = currentPeriod(party.cycle as Cycle, nowMs);
     const scheduleSnap = await tx.get(partyRef.collection("schedules").doc(period.id));
+    // 이번 주기에 파티장이 추가한 임시 용병도 자리를 차지한다.
+    const extra = extraMercenaryCount(scheduleSnap.get("mercenaries") as MercenaryLike[] | undefined);
+    if (memberUids.length + extra >= MAX_PARTY_SIZE) {
+      throw new HttpsError("failed-precondition", `파티 정원(${MAX_PARTY_SIZE}명)이 찼습니다.`, { reason: "full" });
+    }
     assertMembershipWindow(party, scheduleSnap, nowMs, true);
 
     tx.update(partyRef, { memberUids: FieldValue.arrayUnion(uid), [`members.${uid}`]: member });
@@ -305,6 +308,14 @@ export async function leaveParty(db: Firestore, uid: string, data: Data, nowMs: 
     if (scheduleSnap.get("state") === "OPEN") {
       tx.delete(scheduleRef.collection("unavailable").doc(uid));
       tx.delete(scheduleRef.collection("votes").doc(uid));
+    }
+    // 나가는 사람의 대체 용병을 지운다. 남은 사람이 모두 대체된 상태가 되면 대체를 모두 풀어 조율이 멈추지 않게 한다.
+    const mercenaries = (scheduleSnap.get("mercenaries") as MercenaryLike[] | undefined) ?? [];
+    if (mercenaries.some((merc) => merc.replaces !== null)) {
+      const remaining = memberUids.filter((member) => member !== uid);
+      let kept = mercenaries.filter((merc) => merc.replaces !== uid);
+      if (activeMemberUids(remaining, kept).length === 0) kept = kept.filter((merc) => merc.replaces === null);
+      if (kept.length !== mercenaries.length) tx.update(scheduleRef, { mercenaries: kept, updatedAt: Timestamp.now() });
     }
     return { deleted: false, periodId: scheduleSnap.exists ? period.id : null };
   });

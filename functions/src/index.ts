@@ -14,7 +14,14 @@ export {
   startSchedule,
   updatePartyPreferences,
 } from "./callable/party";
-export { confirmSchedule, requestChange, approveChange } from "./callable/schedule";
+export {
+  confirmSchedule,
+  requestChange,
+  approveChange,
+  replaceWithMercenary,
+  addMercenary,
+  removeMercenary,
+} from "./callable/schedule";
 export {
   onUnavailableWrite,
   onVoteWrite,

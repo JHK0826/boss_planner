@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import * as api from "../data/api";
 import { useMain } from "../main-context";
-import type { Party, Schedule, SettlementEntry } from "../lib/model";
+import { mercenaryDisplayName, type Party, type Schedule, type SettlementEntry } from "../lib/model";
 import { partyStatus, snapshotTargets, tabTodos } from "../lib/partyStatus";
 import { combineAll, constant } from "../lib/subscribe";
 import { useNow, useSubscription } from "../lib/useSubscription";
 import { Dialog, Loading, useToast } from "../ui/common";
-import { type Confirm, memberLabelOf, PartyContext, type PartyContextValue, useParty } from "./party/context";
+import { type Confirm, memberLabelOf, PartyContext, type PartyContextValue, periodWord, useParty } from "./party/context";
 
 export function PartyScreen() {
   const { partyId = "" } = useParams();
@@ -255,6 +255,68 @@ function ConfirmDialog({
           </div>
         </Dialog>
       );
+    case "mercenaryReplace": {
+      const locked = schedule?.state === "LOCKED";
+      return (
+        <Dialog
+          title={`${periodWord(schedule)} 용병으로 대체`}
+          onClose={onClose}
+          actions={ok("대체", `${periodWord(schedule)}를 용병으로 대체했습니다`, () =>
+            api.replaceWithMercenary(partyId, schedule!.id, reason.trim()),
+          )}
+        >
+          <p style={{ margin: 0 }}>
+            {locked
+              ? "확정된 시간은 그대로 두고, 나는 이 레이드에서 빠집니다. 내 일정도 풀립니다. 확정된 뒤에는 대체를 취소할 수 없습니다."
+              : "나는 이번 주기 불가 시간 입력과 투표에서 빠지고, 나머지 파티원으로 추천을 다시 계산합니다. 확정 전에는 취소할 수 있습니다."}
+          </p>
+          <p className="small muted" style={{ margin: 0 }}>
+            용병은 분배금 1인분을 받고, 판매자가 직접 지급합니다.
+          </p>
+          <div className="field">
+            <label htmlFor="mercenary-name">용병 이름 (선택)</label>
+            <input id="mercenary-name" className="input" value={reason} maxLength={12} placeholder="용병" onChange={(e) => setReason(e.target.value)} />
+          </div>
+        </Dialog>
+      );
+    }
+    case "mercenaryAdd":
+      return (
+        <Dialog
+          title="임시 용병 추가"
+          onClose={onClose}
+          actions={ok("추가", "임시 용병을 추가했습니다", () => api.addMercenary(partyId, schedule!.id, reason.trim()))}
+        >
+          <p style={{ margin: 0 }}>
+            {periodWord(schedule)}에만 인원이 한 명 늘어납니다. 용병은 시간 제약이 없어 추천에는 영향이 없고, 결정석은 늘어난 인원수로 나눕니다.
+          </p>
+          <p className="small muted" style={{ margin: 0 }}>
+            용병은 분배금 1인분을 받고, 판매자가 직접 지급합니다.
+          </p>
+          <div className="field">
+            <label htmlFor="mercenary-name">용병 이름 (선택)</label>
+            <input id="mercenary-name" className="input" value={reason} maxLength={12} placeholder="용병 1" onChange={(e) => setReason(e.target.value)} />
+          </div>
+        </Dialog>
+      );
+    case "mercenaryRemove": {
+      const replacement = confirm.mercenary.replaces !== null;
+      return (
+        <Dialog
+          title={replacement ? "용병 대체 취소" : "임시 용병 빼기"}
+          onClose={onClose}
+          actions={ok(replacement ? "대체 취소" : "빼기", replacement ? "대체를 취소했습니다. 불가 시간을 확인해 주세요" : "임시 용병을 뺐습니다", () =>
+            api.removeMercenary(partyId, schedule!.id, confirm.mercenary.id),
+          )}
+        >
+          <p style={{ margin: 0 }}>
+            {replacement
+              ? "다시 이번 주기에 참여합니다. 불가 시간을 낸 적이 없다면 입력해야 추천이 나옵니다."
+              : `${mercenaryDisplayName(party, confirm.mercenary)}을(를) 뺄까요?`}
+          </p>
+        </Dialog>
+      );
+    }
     case "leave":
       return (
         <Dialog title="파티 탈퇴" onClose={onClose} actions={ok("탈퇴", `${party.name}에서 탈퇴했습니다`, () => api.leaveParty(partyId))}>

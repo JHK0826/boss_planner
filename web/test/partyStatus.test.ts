@@ -39,6 +39,7 @@ function schedule(o: Partial<Schedule> & { candidateCount?: number; confirmedAt?
     confirmed: confirmedAt !== undefined ? { startMs: confirmedAt, endMs: confirmedAt + hour, memberUids: ["a", "b"] } : null,
     changeRequest: null,
     retryCount: 0,
+    mercenaries: [],
     expiredReason: null,
     settlement: null,
     ...rest,
@@ -101,6 +102,22 @@ describe("partyStatus", () => {
     expect(status("b", snapshot([locked]))).toMatchObject(s(`확정 ${dateTime(raid)}`, false));
     expect(status("b", snapshot([locked]), party(), raid)).toMatchObject(s("결과 기록", true));
     expect(status("b", snapshot([schedule({ state: "VERIFYING", confirmedAt: raid })]))).toMatchObject(s("결과 기록", true));
+  });
+
+  it("용병으로 대체한 사람은 입력·투표·결과 기록을 하지 않고, 나머지만 센다", () => {
+    const mercenaries = [{ id: "merc_1", name: "용병", replaces: "b" }];
+    // b 대체: a만 참여. a가 내면 대기 수가 1/1
+    expect(status("b", snapshot([schedule({ mercenaries })]))).toMatchObject(s("용병으로 대체", false));
+    expect(status("a", snapshot([schedule({ mercenaries, candidateCount: 2 })], { submitted: ["a"], votedRound: { a: 1 } }))).toMatchObject(
+      s("다른 파티원 투표 대기 (1/1)", false),
+    );
+    const raid = now + 2 * hour;
+    const locked = schedule({ state: "LOCKED", confirmedAt: raid, mercenaries });
+    expect(status("b", snapshot([locked]), party(), raid)).toMatchObject(s("용병으로 대체", false));
+    // 파티장이 대체했어도 확정은 파티장의 할 일
+    const leaderReplaced = [{ id: "merc_2", name: "용병", replaces: "a" }];
+    const snap = snapshot([schedule({ mercenaries: leaderReplaced, candidateCount: 2, unanimous: [0] })], { submitted: ["b"], votedRound: { b: 1 } });
+    expect(status("a", snap)).toMatchObject(s("일정 확정", true));
   });
 
   it("변경 요청은 파티장의 할 일", () => {

@@ -3,7 +3,7 @@
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as api from "../../data/api";
-import { acceptsInput, type Confirmed, type Party, type Schedule, type Vote } from "../../lib/model";
+import { acceptsInput, isReplaced, participantUids, type Confirmed, type Party, type Schedule, type Vote } from "../../lib/model";
 import { currentPeriodSchedule, isUpcoming } from "../../lib/partyStatus";
 import { changeRequestDeadline, dateTime, dayLabel, dayWithWeekday, range, time, weekdayLabel } from "../../lib/time";
 import { Loading } from "../../ui/common";
@@ -19,6 +19,8 @@ export function VoteTab() {
   // 미리 연 다음 주 일정
   const upcoming = isUpcoming(schedule, now);
   const thisWeek = upcoming && schedules ? currentPeriodSchedule(schedules, now) : undefined;
+  // 이번 주기를 용병으로 대체했으면 입력·투표하지 않는다.
+  const replaced = isReplaced(schedule, uid);
 
   return (
     <>
@@ -41,7 +43,7 @@ export function VoteTab() {
         schedule={schedule}
         early={upcoming}
         loading={schedules === undefined}
-        submittedCount={party.memberUids.filter((u) => unavailable[u]?.submitted).length}
+        submittedCount={participantUids(party, schedule).filter((u) => unavailable[u]?.submitted).length}
         mySubmitted={unavailable[uid]?.submitted === true}
         votes={votes}
         isLeader={isLeader}
@@ -69,7 +71,7 @@ export function VoteTab() {
           </p>
         </>
       )}
-      {inputOpen && schedule && (
+      {inputOpen && schedule && !replaced && (
         <button className="btn-outline full" disabled={busy} onClick={() => navigate(`/parties/${party.id}/unavailable/${schedule.id}`)}>
           {(upcoming ? "다음 주 " : "") + (unavailable[uid]?.submitted ? "불가 시간 수정" : "불가 시간 입력")}
         </button>
@@ -110,7 +112,10 @@ function ScheduleSection({
   onAsk: (confirm: Confirm) => void;
   onRespondToChange: (approve: boolean) => void;
 }) {
-  const memberCount = party.memberUids.length;
+  // 이번 주기 참여 파티원 (용병으로 대체한 사람 제외)
+  const participants = participantUids(party, schedule);
+  const memberCount = participants.length;
+  const replaced = isReplaced(schedule, uid);
   if (loading) return <Loading />;
   if (!schedule) {
     return (
@@ -185,7 +190,11 @@ function ScheduleSection({
             {schedule.state === "OPEN" && !early && ` · 마감 ${dateTime(schedule.inputDeadlineMs - 60_000)}`}
           </p>
           <p className="small" style={{ margin: 0 }}>
-            {mySubmitted ? "전원이 제출하면 추천 시간이 나옵니다." : "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."}
+            {replaced
+              ? "이번 주기는 용병으로 대체했습니다. 나머지 파티원이 조율합니다. 파티 탭에서 대체를 취소할 수 있습니다."
+              : mySubmitted
+                ? "전원이 제출하면 추천 시간이 나옵니다."
+                : "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."}
           </p>
         </>
       ) : (
@@ -195,7 +204,9 @@ function ScheduleSection({
           schedule={schedule}
           early={early}
           memberCount={memberCount}
-          votes={votes}
+          // 참여 파티원의 투표만 센다.
+          votes={Object.fromEntries(participants.filter((u) => votes[u]).map((u) => [u, votes[u]]))}
+          canVote={!replaced}
           savedVote={savedVote}
           isLeader={isLeader}
           busy={busy}
@@ -231,7 +242,14 @@ function LockedSchedule({
 }) {
   let body: ReactNode;
   const request = schedule.changeRequest;
-  if (now >= confirmed.startMs) {
+  const replaced = isReplaced(schedule, uid);
+  if (replaced) {
+    body = (
+      <p className="small" style={{ margin: 0 }}>
+        이 레이드는 용병으로 대체했습니다. 결과 기록과 변경 요청은 참여하는 파티원이 합니다.
+      </p>
+    );
+  } else if (now >= confirmed.startMs) {
     body = (
       <>
         <p style={{ margin: 0 }}>{now >= confirmed.endMs ? "레이드가 끝났나요? 결과를 기록해 주세요." : "레이드 진행 중입니다. 끝나면 결과를 기록해 주세요."}</p>
@@ -303,6 +321,11 @@ function LockedSchedule({
       <div className="card stack" style={{ gap: 2 }}>
         <span className="small muted">확정된 시간</span>
         <span style={{ fontSize: 20, fontWeight: 600 }}>{range(confirmed.startMs, confirmed.endMs)}</span>
+        {schedule.mercenaries.length > 0 && (
+          <span className="small muted">
+            참여: 파티원 {confirmed.memberUids.length}명 + 용병 {schedule.mercenaries.length}명
+          </span>
+        )}
       </div>
       {body}
     </div>
@@ -314,6 +337,7 @@ function CandidateVoting({
   early,
   memberCount,
   votes,
+  canVote,
   savedVote,
   isLeader,
   busy,
@@ -324,6 +348,8 @@ function CandidateVoting({
   early: boolean;
   memberCount: number;
   votes: Record<string, Vote>;
+  /** 용병으로 대체한 사람은 투표하지 않는다(파티장이면 확정은 한다) */
+  canVote: boolean;
   savedVote: Vote | undefined;
   isLeader: boolean;
   busy: boolean;
@@ -345,11 +371,17 @@ function CandidateVoting({
   return (
     <div className="stack" style={{ gap: 4 }}>
       <div className="row">
-        <span className="small grow">가능한 시간에 모두 동의해 주세요. 전원이 동의한 시간 중에서 파티장이 확정합니다.</span>
+        <span className="small grow">
+          {canVote
+            ? "가능한 시간에 모두 동의해 주세요. 전원이 동의한 시간 중에서 파티장이 확정합니다."
+            : "이번 주기는 용병으로 대체해 투표하지 않습니다. 나머지 파티원이 투표합니다."}
+        </span>
         {/* 한 번에 전부 고르거나 비운다. 투표는 아래 버튼으로 보낸다(골라 놓고 몇 개만 뺄 수 있게). */}
-        <button className="btn-text" disabled={busy} onClick={() => setSelected(allSelected ? new Set() : new Set(indices))}>
-          {allSelected ? "모두 해제" : "모두 가능"}
-        </button>
+        {canVote && (
+          <button className="btn-text" disabled={busy} onClick={() => setSelected(allSelected ? new Set() : new Set(indices))}>
+            {allSelected ? "모두 해제" : "모두 가능"}
+          </button>
+        )}
       </div>
       {schedule.candidates.map((candidate, index) => {
         const unanimous = schedule.unanimous.includes(index);
@@ -364,7 +396,9 @@ function CandidateVoting({
               </span>
             )}
             <label className="row" style={{ padding: "6px 0", cursor: busy ? "default" : "pointer" }}>
-              <input type="checkbox" className="check" checked={selected.has(index)} disabled={busy} onChange={() => toggle(index)} />
+              {canVote && (
+                <input type="checkbox" className="check" checked={selected.has(index)} disabled={busy} onChange={() => toggle(index)} />
+              )}
               <span className="grow" style={{ paddingLeft: 4 }}>
                 <span style={{ fontWeight: 600 }}>
                   {time(candidate.startMs)} ~ {time(candidate.endMs)}
@@ -390,9 +424,11 @@ function CandidateVoting({
           </div>
         );
       })}
-      <button className="btn-outline full" disabled={busy || unchanged} onClick={() => onVote([...selected], schedule.round)}>
-        {!savedVote && selected.size === 0 ? "모두 안 됨으로 투표" : !savedVote ? "투표하기" : "투표 바꾸기"}
-      </button>
+      {canVote && (
+        <button className="btn-outline full" disabled={busy || unchanged} onClick={() => onVote([...selected], schedule.round)}>
+          {!savedVote && selected.size === 0 ? "모두 안 됨으로 투표" : !savedVote ? "투표하기" : "투표 바꾸기"}
+        </button>
+      )}
       <p className="small" style={{ margin: 0 }}>
         {schedule.unanimous.length > 0 && early
           ? "전원이 동의한 시간이 있습니다. 목요일 00:00부터 파티장이 확정할 수 있습니다."

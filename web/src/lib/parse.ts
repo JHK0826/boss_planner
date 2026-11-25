@@ -108,6 +108,12 @@ export function toSchedule(id: string, data: DocumentData | undefined): Schedule
       })
     : [];
 
+  const mercenaries = Array.isArray(data.mercenaries)
+    ? data.mercenaries.flatMap((item: DocumentData) =>
+        typeof item?.id === "string" ? [{ id: item.id, name: str(item.name) ?? "용병", replaces: str(item.replaces) }] : [],
+      )
+    : [];
+
   return {
     id,
     state: str(data.state) ?? "OPEN",
@@ -124,5 +130,6 @@ export function toSchedule(id: string, data: DocumentData | undefined): Schedule
     retryCount: num(data.retryCount) ?? 0,
     expiredReason: str(data.expiredReason),
     settlement,
+    mercenaries,
   };
 }

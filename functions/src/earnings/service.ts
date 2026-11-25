@@ -25,7 +25,8 @@ import {
   type SchedulerBoss,
   type SettlementForShares,
 } from "../domain/earnings";
-import { kstDateString, kstWeekday } from "../domain/time";
+import { extraMercenaryCount, type MercenaryLike } from "../domain/mercenary";
+import { currentPeriod, kstDateString, kstWeekday, type Cycle } from "../domain/time";
 import type { NexonClient } from "../nexon/client";
 import { toHttpsError } from "../nexon/errors";
 
@@ -46,13 +47,21 @@ export interface CharacterScheduler {
   error: string | null;
 }
 
-async function loadParties(db: Firestore, uid: string): Promise<PartyForSize[]> {
+/** 내 파티들. 인원수에는 atMs가 속한 주기에 파티장이 추가한 임시 용병도 더한다. */
+async function loadParties(db: Firestore, uid: string, atMs: number): Promise<PartyForSize[]> {
   const snap = await db.collection("parties").where("memberUids", "array-contains", uid).get();
-  return snap.docs.map((doc) => ({
-    memberUids: (doc.get("memberUids") as string[] | undefined) ?? [],
-    members: (doc.get("members") as PartyForSize["members"] | undefined) ?? {},
-    bosses: Array.isArray(doc.get("bosses")) ? (doc.get("bosses") as { name: string }[]) : [],
-  }));
+  return Promise.all(
+    snap.docs.map(async (doc) => {
+      const cycle = doc.get("cycle") as Cycle | undefined;
+      const schedule = cycle ? await doc.ref.collection("schedules").doc(currentPeriod(cycle, atMs).id).get() : null;
+      return {
+        memberUids: (doc.get("memberUids") as string[] | undefined) ?? [],
+        members: (doc.get("members") as PartyForSize["members"] | undefined) ?? {},
+        bosses: Array.isArray(doc.get("bosses")) ? (doc.get("bosses") as { name: string }[]) : [],
+        extraMercenaries: extraMercenaryCount(schedule?.get("mercenaries") as MercenaryLike[] | undefined),
+      };
+    }),
+  );
 }
 
 /** 결정석 수익 기록을 덮어쓴다. cycles에 든 기간만 쓴다. */
@@ -94,7 +103,7 @@ export async function getSchedulerState(
   }
   const ids = ((userSnap.get("selectedCharacterIds") as unknown[] | undefined) ?? []).filter((id): id is string => typeof id === "string").slice(0, 50);
   const maxAge = data?.refresh === true ? REFRESH_MIN_MS : SCHEDULER_CACHE_MS;
-  const parties = await loadParties(db, uid);
+  const parties = await loadParties(db, uid, nowMs);
   const characters: Record<string, CharacterScheduler> = {};
 
   for (const characterId of ids) {
@@ -155,7 +164,7 @@ export async function finalizeEarnings(
     const uid = secretDoc.id;
     const ids = ((await db.doc(`users/${uid}`).get()).get("selectedCharacterIds") as string[] | undefined) ?? [];
     if (ids.length === 0) continue;
-    const parties = await loadParties(db, uid);
+    const parties = await loadParties(db, uid, yesterday);
     const owned = (secretDoc.get("characters") as Record<string, SecretCharacter> | undefined) ?? {};
     for (const characterId of ids) {
       const character = owned[characterId];

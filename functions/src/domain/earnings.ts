@@ -44,14 +44,16 @@ export interface PartyForSize {
   memberUids: string[];
   members: Record<string, { characterId?: string } | undefined>;
   bosses: { name: string }[];
+  /** 그 주기에 파티장이 추가한 임시 용병 수. 레이드 인원에 더한다 */
+  extraMercenaries?: number;
 }
 
-/** 그 캐릭터가 그 보스로 들어간 파티의 인원. 없으면 1 */
+/** 그 캐릭터가 그 보스로 들어간 파티의 인원(임시 용병 포함). 없으면 1 */
 export function partySizeFor(parties: PartyForSize[], uid: string, characterId: string, bossName: string): number {
   const party = parties.find(
     (p) => p.memberUids.includes(uid) && p.members[uid]?.characterId === characterId && p.bosses.some((b) => b.name === bossName),
   );
-  return party ? Math.max(1, party.memberUids.length) : 1;
+  return party ? Math.max(1, party.memberUids.length + (party.extraMercenaries ?? 0)) : 1;
 }
 
 /** 칩 하나에 보여 줄 값 */

@@ -1,6 +1,6 @@
 // 파티 화면(하단 탭 4개)이 같이 쓰는 값. 바깥 틀(PartyScreen)이 한 번 구독해서 탭에 넘긴다.
 import { createContext, useContext } from "react";
-import type { Party, PartyMember, Schedule, Unavailable, Vote } from "../../lib/model";
+import type { Mercenary, Party, PartyMember, Schedule, Unavailable, Vote } from "../../lib/model";
 
 /** 확인 대화상자를 거쳐서 하는 일 */
 export type Confirm =
@@ -9,7 +9,10 @@ export type Confirm =
   | { kind: "delegate"; member: PartyMember }
   | { kind: "lock"; index: number; label: string }
   | { kind: "record"; cleared: boolean }
-  | { kind: "requestChange" };
+  | { kind: "requestChange" }
+  | { kind: "mercenaryReplace" }
+  | { kind: "mercenaryAdd" }
+  | { kind: "mercenaryRemove"; mercenary: Mercenary };
 
 export interface PartyContextValue {
   uid: string;
@@ -43,3 +46,7 @@ export function useParty(): PartyContextValue {
 }
 
 export const memberLabelOf = (member: PartyMember) => member.displayName || member.characterName;
+
+/** 미리 연 다음 주 일정이면 "다음 주", 아니면 "이번 주기" */
+export const periodWord = (schedule: Schedule | undefined): string =>
+  schedule && schedule.periodStartMs > Date.now() ? "다음 주" : "이번 주기";

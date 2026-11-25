@@ -1,7 +1,7 @@
 // 파티 목록의 "내가 할 일". Android app/.../data/PartyStatus.kt와 같은 규칙이다.
 import { dateTime } from "./time";
 import type { Party, Schedule, SettlementEntry, Unavailable, Vote } from "./model";
-import { acceptsInput } from "./model";
+import { acceptsInput, isReplaced, participantUids } from "./model";
 
 /** 파티 목록에서 파티 하나의 상태를 정할 때 쓰는 일정 데이터 */
 export interface PartySnapshot {
@@ -58,13 +58,16 @@ export const statusText = (status: PartyStatus): string =>
 export function partyStatus(uid: string, party: Party, snapshot: PartySnapshot | undefined, nowMs: number): PartyStatus | null {
   if (!snapshot) return null;
   const isLeader = party.leaderUid === uid;
-  const members = party.memberUids.length;
   const todos: string[] = [];
   let info = "";
 
   // 끝난 주기의 일정은 "이번 주기"로 보지 않는다.
   const latest = snapshot.schedules[0];
   const current = latest && latest.periodEndMs > nowMs ? latest : undefined;
+  // 그 주기 참여 파티원 (용병으로 대체한 사람 제외). 대체한 본인은 입력·투표·결과 기록을 하지 않는다.
+  const participants = participantUids(party, current);
+  const members = participants.length;
+  const replaced = isReplaced(current, uid);
   if (!current) {
     info = party.scheduleStarted ? "다음 주기 대기" : "일정 시작 전";
   } else {
@@ -74,9 +77,12 @@ export function partyStatus(uid: string, party: Party, snapshot: PartySnapshot |
         // 이번 주 레이드가 끝나 미리 연 다음 주 일정: 입력·투표는 할 일, 확정은 목요일부터
         const upcoming = isUpcoming(current, nowMs);
         const prefix = upcoming ? "다음 주 " : "";
-        const submitted = party.memberUids.filter((m) => snapshot.unavailable[m]?.submitted === true).length;
-        const voted = party.memberUids.filter((m) => snapshot.votes[m]?.round === current.round).length;
-        if (snapshot.unavailable[uid]?.submitted !== true) todos.push(`${prefix}불가 시간 입력`);
+        const submitted = participants.filter((m) => snapshot.unavailable[m]?.submitted === true).length;
+        const voted = participants.filter((m) => snapshot.votes[m]?.round === current.round).length;
+        if (replaced) {
+          if (current.unanimous.length > 0 && isLeader && !upcoming) todos.push("일정 확정");
+          else info = `${prefix}용병으로 대체`;
+        } else if (snapshot.unavailable[uid]?.submitted !== true) todos.push(`${prefix}불가 시간 입력`);
         else if (current.candidates.length === 0) info = `${prefix}다른 파티원 입력 대기 (${submitted}/${members})`;
         else if (snapshot.votes[uid]?.round !== current.round) todos.push(`${prefix}투표`);
         else if (current.unanimous.length > 0 && upcoming) info = "다음 주 전원 동의 · 목요일부터 확정 가능";
@@ -88,13 +94,15 @@ export function partyStatus(uid: string, party: Party, snapshot: PartySnapshot |
       }
       case "LOCKED": {
         const confirmed = current.confirmed;
-        if (confirmed && nowMs >= confirmed.startMs) todos.push("결과 기록");
+        if (replaced) info = "용병으로 대체";
+        else if (confirmed && nowMs >= confirmed.startMs) todos.push("결과 기록");
         else if (isLeader && current.changeRequest?.status === "PENDING") todos.push("변경 요청 처리");
         else info = confirmed ? `확정 ${dateTime(confirmed.startMs)}` : "확정";
         break;
       }
       case "VERIFYING":
-        todos.push("결과 기록");
+        if (replaced) info = "용병으로 대체";
+        else todos.push("결과 기록");
         break;
       case "SETTLED": {
         const settlement = current.settlement;

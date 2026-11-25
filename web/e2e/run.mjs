@@ -432,6 +432,44 @@ try {
   await shot(a, "15-next-week");
   step("전원이 미리 내면 다음 주 투표도 미리 하고, 확정은 목요일부터라 확정 버튼 대신 안내가 보인다");
 
+  // ---------- 이번 주기 용병 ----------
+  const nextRef = (await db.collection(`parties/${partyDoc.id}/schedules`).where("preOpened", "==", true).get()).docs[0].ref;
+  await tab(b, "파티");
+  await b.getByText("다음 주 용병", { exact: true }).waitFor();
+  await b.getByRole("button", { name: "다음 주 용병으로 대체" }).click();
+  const replaceDialog = b.getByRole("dialog", { name: "다음 주 용병으로 대체" });
+  await replaceDialog.getByRole("button", { name: "대체", exact: true }).click();
+  await b.getByText("다음 주를 용병으로 대체했습니다").waitFor();
+  assert.deepEqual(
+    ((await nextRef.get()).get("mercenaries") ?? []).map((m) => [m.name, m.replaces]),
+    [["용병", uidB]],
+  );
+  await b.getByRole("button", { name: "대체 취소" }).waitFor();
+
+  await tab(a, "파티");
+  await a.getByRole("heading", { name: "파티원 2명 · 용병 1명" }).waitFor();
+  await a.getByText("용병 (비숍 대신)").waitFor();
+  await a.locator(`[data-member="${uidB}"]`).getByText("다음 주 용병으로 대체").waitFor();
+  step("파티원이 다음 주를 용병으로 대체하면 파티 탭에 대체 용병이 보인다");
+
+  await a.getByRole("button", { name: "임시 용병 추가" }).click();
+  await a.getByRole("dialog", { name: "임시 용병 추가" }).getByRole("button", { name: "추가", exact: true }).click();
+  await a.getByText("임시 용병을 추가했습니다").waitFor();
+  await a.getByRole("heading", { name: "파티원 2명 · 용병 2명" }).waitFor();
+  await shot(a, "16-mercenary");
+  await a.getByRole("button", { name: "용병 1 빼기" }).click();
+  await a.getByRole("dialog", { name: "임시 용병 빼기" }).getByRole("button", { name: "빼기", exact: true }).click();
+  await a.getByText("임시 용병을 뺐습니다").waitFor();
+  await a.getByRole("heading", { name: "파티원 2명 · 용병 1명" }).waitFor();
+  step("파티장이 임시 용병을 추가하고 뺀다");
+
+  await b.getByRole("button", { name: "대체 취소" }).click();
+  await b.getByRole("dialog", { name: "용병 대체 취소" }).getByRole("button", { name: "대체 취소", exact: true }).click();
+  await b.getByText("대체를 취소했습니다", { exact: false }).waitFor();
+  assert.deepEqual((await nextRef.get()).get("mercenaries"), []);
+  await a.getByRole("heading", { name: "파티원 2명" }).waitFor();
+  step("확정 전에는 대체를 취소할 수 있다");
+
   assert.deepEqual(errors, [], `브라우저 오류:\n${errors.join("\n")}`);
   console.log("E2E 통과");
 } catch (error) {

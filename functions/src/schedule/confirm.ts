@@ -1,6 +1,7 @@
 import { Timestamp, type DocumentData, type Firestore, type Transaction } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
 import { bossesOf } from "../domain/bosses";
+import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { unanimousCandidates } from "../domain/recommend";
 import { slotIdsBetween } from "../domain/time";
 import type { Candidate, Confirmed } from "./model";
@@ -66,7 +67,8 @@ export async function confirmSchedule(
       });
     }
 
-    const memberUids = party.memberUids as string[];
+    // 이번 주기 참여 파티원 (용병으로 대체한 사람은 투표·일정에서 빠진다)
+    const memberUids = activeMemberUids(party.memberUids as string[], schedule.mercenaries as MercenaryLike[] | undefined);
     const candidates = (schedule.candidates as Candidate[]) ?? [];
     const candidate = candidates[candidateIndex];
 

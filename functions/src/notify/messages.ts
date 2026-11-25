@@ -4,6 +4,7 @@
  */
 
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
+import { activeMemberUids, replacedUids, type MercenaryLike } from "../domain/mercenary";
 
 export interface Push {
   uids: string[];
@@ -48,7 +49,8 @@ export function scheduleNotifications(
   after: DocumentData | undefined,
 ): Push[] {
   if (!after) return [];
-  const everyone = party.memberUids;
+  // 이번 주기 참여 파티원. 용병으로 대체한 사람에게는 그 주기 일정 알림을 보내지 않는다.
+  const everyone = activeMemberUids(party.memberUids, after.mercenaries as MercenaryLike[] | undefined);
   const push = (uids: string[], body: string): Push => ({ uids, title: party.name, body, partyId: party.id });
   const pushes: Push[] = [];
 
@@ -65,6 +67,12 @@ export function scheduleNotifications(
       );
     }
     return pushes;
+  }
+
+  // 파티원이 이번 주기를 용병으로 대체함 → 다른 참여 파티원에게
+  const wasReplaced = replacedUids(before.mercenaries as MercenaryLike[] | undefined);
+  for (const uid of replacedUids(after.mercenaries as MercenaryLike[] | undefined)) {
+    if (!wasReplaced.has(uid)) pushes.push(push(everyone, `${memberName(party, uid)}님이 이번 주기를 용병으로 대체했습니다.`));
   }
 
   // 미리 열어 둔 다음 주 일정이 이번 주기가 됨 (목요일 00:00)
@@ -166,11 +174,12 @@ export function scheduleNotifications(
     const amountsOf = (value: DocumentData | undefined | null) =>
       JSON.stringify([value?.amounts ?? null, value?.amountPerPerson ?? null]);
     if (!previous || amountsOf(previous) !== amountsOf(settlement)) {
-      // 사람마다 정산금이 다를 수 있어서 한 명씩 자기 금액을 알려 준다.
+      // 사람마다 정산금이 다를 수 있어서 한 명씩 자기 금액을 알려 준다. 레이드에 참여한 사람(용병 제외)에게만.
       const seller = memberName(party, settlement.sellerUid);
-      for (const uid of everyone) {
+      const participants = (after.confirmed?.memberUids as string[] | undefined) ?? everyone;
+      for (const uid of participants) {
         if (uid === settlement.sellerUid) continue;
-        const amount = (settlement.amounts?.[uid] ?? settlement.amountPerPerson) as number | undefined;
+        const amount = (settlement.amounts ? settlement.amounts[uid] : settlement.amountPerPerson) as number | undefined;
         if (amount === undefined || amount === null) continue;
         pushes.push(
           push([uid], `${seller}님이 분배금을 등록했습니다. 내 정산금은 ${formatMeso(amount)}입니다. 채팅으로 수령 방법을 알려 주세요.`),

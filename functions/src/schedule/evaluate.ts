@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { FieldPath, Timestamp, type Firestore } from "firebase-admin/firestore";
+import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { preferredSlots, recommendStarts, unanimousCandidates } from "../domain/recommend";
 import { SLOT_MS, kstWeekday, slotIdFromMs, slotIndex, slotMs } from "../domain/time";
 import { DEFAULT_MIN_LEAD_MINUTES, type Candidate, type PreferredWindow } from "./model";
@@ -77,7 +78,8 @@ function attempt(
     // RETRY(미클리어 후 재조정)도 OPEN과 같은 절차를 밟는다.
     if (!party || !schedule || (schedule.state !== "OPEN" && schedule.state !== "RETRY")) return "not-open";
 
-    const memberUids = [...(party.memberUids as string[])].sort();
+    // 이번 주기에 용병으로 대체한 파티원은 입력·투표·추천에서 뺀다(용병은 시간 제약이 없다).
+    const memberUids = activeMemberUids(party.memberUids as string[], schedule.mercenaries as MercenaryLike[] | undefined).sort();
     const period = {
       startMs: (schedule.periodStart as Timestamp).toMillis(),
       totalSlots: ((schedule.periodEnd as Timestamp).toMillis() - (schedule.periodStart as Timestamp).toMillis()) / SLOT_MS,

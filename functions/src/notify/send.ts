@@ -1,6 +1,7 @@
 import type { DocumentData, DocumentSnapshot, Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
 import { getMessaging, type MulticastMessage } from "firebase-admin/messaging";
+import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { missingInputNotifications, type PartyInfo, type Push } from "./messages";
 
 /** FCM 발송부. 테스트에서 바꿔 끼울 수 있게 필요한 메서드만 받는다. */
@@ -90,7 +91,9 @@ export async function runInputDeadlineCheck(db: Firestore, nowMs: number, sender
     if (!party) continue;
     const unavailable = await doc.ref.collection("unavailable").get();
     const submitted = new Set(unavailable.docs.filter((d) => d.get("submitted") === true).map((d) => d.id));
-    pushes.push(...missingInputNotifications(party, party.memberUids.filter((uid) => !submitted.has(uid))));
+    // 용병으로 대체한 사람은 입력하지 않아도 된다.
+    const active = activeMemberUids(party.memberUids, schedule.mercenaries as MercenaryLike[] | undefined);
+    pushes.push(...missingInputNotifications(party, active.filter((uid) => !submitted.has(uid))));
   }
   return sendPushes(db, pushes, sender);
 }

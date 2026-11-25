@@ -1,4 +1,5 @@
 import type { DocumentData, Firestore, Timestamp } from "firebase-admin/firestore";
+import { replacedUids, type MercenaryLike } from "../domain/mercenary";
 import { SLOT_MS, currentPeriod, type Cycle } from "../domain/time";
 import type { Candidate } from "./model";
 
@@ -69,7 +70,11 @@ export async function loadPendingSlots(
       const schedule = await db.doc(`parties/${otherId}/schedules/${currentPeriod(cycle, Math.max(period.startMs, nowMs)).id}`).get();
       const state = schedule.get("state") as string | undefined;
       if (state !== "OPEN" && state !== "RETRY") return;
-      const sameCharacter = memberIndexes.filter((i) => {
+      // 그 파티에서 이번 주기를 용병으로 대체한 파티원은 그 파티 레이드에 가지 않으므로 상관없다.
+      const replaced = replacedUids(schedule.get("mercenaries") as MercenaryLike[] | undefined);
+      const involved = memberIndexes.filter((i) => !replaced.has(memberUids[i]));
+      if (involved.length === 0) return;
+      const sameCharacter = involved.filter((i) => {
         const mine = memberCharacterIds[i];
         return !!mine && members[memberUids[i]]?.characterId === mine;
       });
@@ -78,7 +83,7 @@ export async function loadPendingSlots(
         const last = Math.floor(((candidate.end as Timestamp).toMillis() - 1 - period.startMs) / SLOT_MS);
         for (let index = Math.max(first, 0); index <= last && index < period.totalSlots; index++) {
           all.add(index);
-          for (const memberIndex of memberIndexes) byMember[memberIndex].add(index);
+          for (const memberIndex of involved) byMember[memberIndex].add(index);
           for (const memberIndex of sameCharacter) sameCharacterByMember[memberIndex].add(index);
         }
       }

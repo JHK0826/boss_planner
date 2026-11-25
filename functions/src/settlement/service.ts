@@ -1,5 +1,6 @@
 import { Timestamp, type DocumentReference, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
+import { isMercenaryId, type MercenaryLike } from "../domain/mercenary";
 import { recordSettlementEarnings } from "../earnings/service";
 import { requireString } from "../schedule/confirm";
 import type { Confirmed } from "../schedule/model";
@@ -101,8 +102,8 @@ export async function registerSettlement(db: Firestore, uid: string, data: Data)
 
   const result = await db.runTransaction(async (tx) => {
     const schedule = (await tx.get(scheduleRef)).data();
-    const participants = (schedule?.confirmed as Confirmed | null)?.memberUids ?? [];
-    if (!schedule || !participants.includes(uid)) {
+    const members = (schedule?.confirmed as Confirmed | null)?.memberUids ?? [];
+    if (!schedule || !members.includes(uid)) {
       throw new HttpsError("permission-denied", "이 레이드에 참여한 파티원만 등록할 수 있습니다.", { reason: "not-member" });
     }
     if (schedule.state !== "SETTLED") {
@@ -119,7 +120,9 @@ export async function registerSettlement(db: Firestore, uid: string, data: Data)
       }
     }
 
-    const { amounts, summary } = plan(participants);
+    // 용병도 1인분을 받는다(비율 조정 가능). 판매자가 게임에서 직접 주고 "직접 지급함"으로 끝낸다.
+    const mercenaryIds = ((schedule.mercenaries as MercenaryLike[] | undefined) ?? []).map((merc) => merc.id);
+    const { amounts, summary } = plan([...members, ...mercenaryIds]);
     const recipients = Object.keys(amounts);
     for (const recipient of recipients) {
       tx.set(settlementRef.doc(recipient), { amount: amounts[recipient], status: "PENDING", paidAt: null, receivedAt: null });
@@ -152,21 +155,40 @@ async function recordEarnings(db: Firestore, scheduleRef: DocumentReference): Pr
   }
 }
 
-/** 판매자가 한 파티원에게 지급했다고 표시한다: 대기 → 지급함 */
+/**
+ * 판매자가 한 파티원에게 지급했다고 표시한다: 대기 → 지급함.
+ * 용병은 앱에서 수령을 확인할 수 없으므로, 판매자가 직접 지급함을 누르면 바로 수령 확인까지 끝난다.
+ */
 export async function markPaid(db: Firestore, uid: string, data: Data): Promise<void> {
   const { scheduleRef, settlementRef } = refs(db, data);
-  const recipientRef = settlementRef.doc(requireString(data, "recipientUid"));
+  const recipientId = requireString(data, "recipientUid");
+  const recipientRef = settlementRef.doc(recipientId);
+  const mercenary = isMercenaryId(recipientId);
 
-  await db.runTransaction(async (tx) => {
-    const [scheduleSnap, recipientSnap] = await Promise.all([tx.get(scheduleRef), tx.get(recipientRef)]);
+  const completed = await db.runTransaction(async (tx) => {
+    const [scheduleSnap, recipientSnap, all] = await Promise.all([
+      tx.get(scheduleRef),
+      tx.get(recipientRef),
+      mercenary ? tx.get(settlementRef) : Promise.resolve(null),
+    ]);
     if (scheduleSnap.get("settlement.sellerUid") !== uid) {
       throw new HttpsError("permission-denied", "분배금을 등록한 판매자만 지급 처리할 수 있습니다.", { reason: "not-seller" });
     }
     if (recipientSnap.get("status") !== "PENDING") {
       throw new HttpsError("failed-precondition", "지급 대기 중인 파티원이 아닙니다.", { reason: "not-pending" });
     }
-    tx.update(recipientRef, { status: "PAID", paidAt: Timestamp.now() });
+    const now = Timestamp.now();
+    if (!mercenary) {
+      tx.update(recipientRef, { status: "PAID", paidAt: now });
+      return false;
+    }
+    tx.update(recipientRef, { status: "RECEIVED", paidAt: now, receivedAt: now });
+    const done = all!.docs.every((doc) => doc.id === recipientId || doc.get("status") === "RECEIVED");
+    if (done) tx.update(scheduleRef, { "settlement.completed": true, "settlement.completedAt": now, updatedAt: now });
+    return done;
   });
+  // 정산이 끝나면 판매자 몫이 수익에 잡힌다.
+  if (completed) await recordEarnings(db, scheduleRef);
 }
 
 /** 받은 사람이 수령을 확인한다: 지급함 → 수령 확인. 전원이 확인하면 정산이 완료된다. */
