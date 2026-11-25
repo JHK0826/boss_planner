@@ -59,7 +59,26 @@ data class Schedule(
     val expiredReason: String?,
     /** 등록된 분배금. 아직 등록 전이면 null */
     val settlement: Settlement?,
+    /** 이번 주기 용병 (대체 용병 + 파티장이 추가한 임시 용병) */
+    val mercenaries: List<Mercenary> = emptyList(),
 ) {
+    /** 이번 주기를 용병으로 대체한 파티원 */
+    val replacedUids: Set<String> get() = mercenaries.mapNotNull { it.replaces }.toSet()
+
+    fun isReplaced(uid: String): Boolean = uid in replacedUids
+
+    /** 그 파티원의 대체 용병 */
+    fun replacementOf(uid: String): Mercenary? = mercenaries.firstOrNull { it.replaces == uid }
+
+    /** 파티장이 추가한 임시 용병 수 (레이드 인원 = 파티원 수 + 이 값) */
+    val extraMercenaryCount: Int get() = mercenaries.count { it.replaces == null }
+
+    /** 용병을 대체·추가·빼기 할 수 있는 때: 확정 전, 또는 확정 후 레이드 시작 전 (서버 domain/mercenary.ts와 같음) */
+    fun canEditMercenaries(nowMs: Long): Boolean = acceptsInput || (state == "LOCKED" && confirmed != null && nowMs < confirmed.startMs)
+
+    /** 대체 취소는 확정 전에만 된다 */
+    val canCancelReplacement: Boolean get() = acceptsInput
+
     /** 클리어했지만 분배금 정산이 끝나지 않았다 */
     val settlementOpen: Boolean get() = state == "SETTLED" && settlement?.completed != true
 
@@ -68,6 +87,28 @@ data class Schedule(
 
     /** 이번 주 레이드가 끝나 미리 연 다음 주 일정인가 (주기가 아직 시작하지 않음). 확정은 주기가 시작한 뒤에만 된다. */
     fun isUpcoming(nowMs: Long): Boolean = periodStartMs > nowMs
+}
+
+/**
+ * 이번 주기 용병. replaces가 있으면 그 파티원을 대체한 용병, null이면 파티장이 추가한 임시 용병.
+ * 계정·스케줄러가 없는 더미라 시간 제약이 없고, 정산에서는 1인분을 받는다(판매자가 직접 지급).
+ */
+data class Mercenary(val id: String, val name: String, val replaces: String?)
+
+/** 파티 정원: 파티원 + 그 주기에 파티장이 추가한 임시 용병 */
+const val MAX_PARTY_SIZE = 6
+
+/** 정산 문서 ID가 용병인가 */
+fun isMercenaryId(id: String): Boolean = id.startsWith("merc_")
+
+/** 그 주기에 참여하는 파티원 (용병으로 대체한 사람 제외). 일정이 없으면 파티원 전원 */
+fun Party.participantUids(schedule: Schedule?): List<String> =
+    if (schedule == null) memberUids else memberUids.filter { it !in schedule.replacedUids }
+
+/** 용병 표시 이름: "용병 2", "용병 (비숍 대신)" */
+fun Party.mercenaryLabel(merc: Mercenary): String {
+    val replaced = merc.replaces?.let { members[it] } ?: return merc.name
+    return "${merc.name} (${replaced.displayName.ifBlank { replaced.characterName }} 대신)"
 }
 
 /** 지금 진행 중인 주기의 일정 (미리 연 다음 주 일정이 맨 앞에 있어도 이번 주 것을 찾는다) */

@@ -253,6 +253,21 @@ class PartyRepository(
         call("approveChange", mapOf("partyId" to partyId, "periodId" to periodId, "approve" to approve))
     }
 
+    /** 이번 주기를 용병으로 대체한다. 이름을 비우면 "용병" */
+    suspend fun replaceWithMercenary(partyId: String, periodId: String, name: String) {
+        call("replaceWithMercenary", mapOf("partyId" to partyId, "periodId" to periodId, "name" to name))
+    }
+
+    /** 파티장이 이번 주기에만 쓰는 임시 용병을 추가한다. 이름을 비우면 "용병 N" */
+    suspend fun addMercenary(partyId: String, periodId: String, name: String) {
+        call("addMercenary", mapOf("partyId" to partyId, "periodId" to periodId, "name" to name))
+    }
+
+    /** 용병을 뺀다: 대체 용병이면 대체 취소(본인, 확정 전), 임시 용병이면 파티장이 뺀다. */
+    suspend fun removeMercenary(partyId: String, periodId: String, mercenaryId: String) {
+        call("removeMercenary", mapOf("partyId" to partyId, "periodId" to periodId, "mercenaryId" to mercenaryId))
+    }
+
     /**
      * fromMs 이후의 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다.
      * busy는 30분 칸마다 문서가 하나씩 있어서, 같은 레이드의 칸을 하나로 묶는다.
@@ -471,6 +486,14 @@ class PartyRepository(
                     netAmount = (m["netAmount"] as? Number)?.toLong(),
                     amountPerPerson = (m["amountPerPerson"] as? Number)?.toLong(),
                     completed = m["completed"] as? Boolean ?: false,
+                )
+            },
+            mercenaries = (doc.get("mercenaries") as? List<*>).orEmpty().mapNotNull { item ->
+                val m = item as? Map<*, *> ?: return@mapNotNull null
+                Mercenary(
+                    id = m["id"] as? String ?: return@mapNotNull null,
+                    name = m["name"] as? String ?: "용병",
+                    replaces = m["replaces"] as? String,
                 )
             },
         )

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -65,6 +66,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
 import com.bossplanner.app.data.Confirmed
+import com.bossplanner.app.data.MAX_PARTY_SIZE
+import com.bossplanner.app.data.Mercenary
+import com.bossplanner.app.data.mercenaryLabel
+import com.bossplanner.app.data.participantUids
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyMember
 import com.bossplanner.app.data.PartyRepository
@@ -93,7 +98,14 @@ private sealed interface Confirm {
     data class Lock(val index: Int, val label: String) : Confirm
     data class Record(val cleared: Boolean) : Confirm
     data object RequestChange : Confirm
+    data object MercenaryReplace : Confirm
+    data object MercenaryAdd : Confirm
+    data class MercenaryRemove(val mercenary: Mercenary) : Confirm
 }
+
+/** 미리 연 다음 주 일정이면 "다음 주", 아니면 "이번 주기" */
+private fun periodWord(schedule: Schedule?): String =
+    if (schedule != null && schedule.periodStartMs > System.currentTimeMillis()) "다음 주" else "이번 주기"
 
 /** 파티 화면 하단 탭 */
 enum class PartyTab(val label: String, val icon: ImageVector) {
@@ -205,7 +217,7 @@ fun PartyScreen(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (tab) {
                 null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                PartyTab.Info -> PartyInfoTab(uid, party, schedule, unavailable, votes, memberImages, now)
+                PartyTab.Info -> PartyInfoTab(uid, party, schedule, unavailable, votes, memberImages, now, busy, onAsk = { confirm = it })
                 PartyTab.Schedule -> ScheduleTab(
                     party = party,
                     schedule = schedule,
@@ -344,6 +356,91 @@ fun PartyScreen(
                 dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
             )
         }
+        Confirm.MercenaryReplace -> {
+            var name by remember { mutableStateOf("") }
+            val word = periodWord(schedule)
+            AlertDialog(
+                onDismissRequest = { confirm = null },
+                title = { Text("$word 용병으로 대체") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            if (schedule?.state == "LOCKED") {
+                                "확정된 시간은 그대로 두고, 나는 이 레이드에서 빠집니다. 내 일정도 풀립니다. 확정된 뒤에는 대체를 취소할 수 없습니다."
+                            } else {
+                                "나는 이번 주기 불가 시간 입력과 투표에서 빠지고, 나머지 파티원으로 추천을 다시 계산합니다. 확정 전에는 취소할 수 있습니다."
+                            },
+                        )
+                        Text("용병은 분배금 1인분을 받고, 판매자가 직접 지급합니다.", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it.take(12) },
+                            label = { Text("용병 이름 (선택)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirm = null
+                        run("${word}를 용병으로 대체했습니다") { parties.replaceWithMercenary(partyId, schedule!!.id, name.trim()) }
+                    }) { Text("대체") }
+                },
+                dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+            )
+        }
+        Confirm.MercenaryAdd -> {
+            var name by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { confirm = null },
+                title = { Text("임시 용병 추가") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "${periodWord(schedule)}에만 인원이 한 명 늘어납니다. 용병은 시간 제약이 없어 추천에는 영향이 없고, 결정석은 늘어난 인원수로 나눕니다.",
+                        )
+                        Text("용병은 분배금 1인분을 받고, 판매자가 직접 지급합니다.", style = MaterialTheme.typography.bodySmall)
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it.take(12) },
+                            label = { Text("용병 이름 (선택)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirm = null
+                        run("임시 용병을 추가했습니다") { parties.addMercenary(partyId, schedule!!.id, name.trim()) }
+                    }) { Text("추가") }
+                },
+                dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+            )
+        }
+        is Confirm.MercenaryRemove -> {
+            val replacement = current.mercenary.replaces != null
+            AlertDialog(
+                onDismissRequest = { confirm = null },
+                title = { Text(if (replacement) "용병 대체 취소" else "임시 용병 빼기") },
+                text = {
+                    Text(
+                        if (replacement) "다시 이번 주기에 참여합니다. 불가 시간을 낸 적이 없다면 입력해야 추천이 나옵니다."
+                        else "${party.mercenaryLabel(current.mercenary)}을(를) 뺄까요?",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirm = null
+                        run(if (replacement) "대체를 취소했습니다. 불가 시간을 확인해 주세요" else "임시 용병을 뺐습니다") {
+                            parties.removeMercenary(partyId, schedule!!.id, current.mercenary.id)
+                        }
+                    }) { Text(if (replacement) "대체 취소" else "빼기") }
+                },
+                dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+            )
+        }
         Confirm.Leave -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("파티 탈퇴") },
@@ -396,9 +493,14 @@ private fun PartyInfoTab(
     votes: Map<String, Vote>,
     memberImages: Map<String, String>,
     now: Long,
+    busy: Boolean,
+    onAsk: (Confirm) -> Unit,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    // 끝나지 않은 주기의 일정만 용병을 보여 준다(미리 연 다음 주면 다음 주).
+    val live = schedule?.takeIf { it.periodEndMs > now }
+    val mercenaries = live?.mercenaries.orEmpty()
     val showMessage = LocalShowMessage.current
     // 시간표를 보고 있는 파티원
     var viewingMember by remember { mutableStateOf<PartyMember?>(null) }
@@ -436,7 +538,10 @@ private fun PartyInfoTab(
             }
         }
 
-        Text("파티원 ${party.memberUids.size}명", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "파티원 ${party.memberUids.size}명" + if (mercenaries.isNotEmpty()) " · 용병 ${mercenaries.size}명" else "",
+            style = MaterialTheme.typography.titleMedium,
+        )
         party.memberUids.forEach { memberUid ->
             val member = party.members[memberUid] ?: return@forEach
             MemberRow(
@@ -444,10 +549,24 @@ private fun PartyInfoTab(
                 imageUrl = memberImages[memberUid],
                 isLeader = memberUid == party.leaderUid,
                 isMe = memberUid == uid,
-                status = memberStatus(schedule, unavailable[memberUid], votes[memberUid]),
+                status = if (live?.isReplaced(memberUid) == true) "${periodWord(live)} 용병으로 대체"
+                else memberStatus(schedule, unavailable[memberUid], votes[memberUid]),
                 onViewTimetable = { viewingMember = member },
             )
         }
+        mercenaries.forEach { merc ->
+            MercenaryRow(
+                label = party.mercenaryLabel(merc),
+                period = periodWord(live),
+                onRemove = if (merc.replaces == null && party.leaderUid == uid && live?.canEditMercenaries(now) == true) {
+                    { onAsk(Confirm.MercenaryRemove(merc)) }
+                } else {
+                    null
+                },
+                busy = busy,
+            )
+        }
+        if (live != null && live.canEditMercenaries(now)) MercenaryCard(uid, party, live, busy, onAsk)
     }
 
     viewingMember?.let { member ->
@@ -508,7 +627,7 @@ private fun ScheduleTab(
             early = upcoming,
             loading = loading,
             myUnavailable = unavailable[uid],
-            submittedCount = party.memberUids.count { unavailable[it]?.submitted == true },
+            submittedCount = party.participantUids(schedule).count { unavailable[it]?.submitted == true },
             votes = votes,
             myVote = votes[uid],
             isLeader = isLeader,
@@ -530,7 +649,8 @@ private fun ScheduleTab(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        if (schedule != null && schedule.acceptsInput) {
+        // 이번 주기를 용병으로 대체했으면 입력하지 않는다.
+        if (schedule != null && schedule.acceptsInput && !schedule.isReplaced(uid)) {
             OutlinedButton(
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
@@ -679,6 +799,64 @@ private fun memberStatus(schedule: Schedule?, unavailable: Unavailable?, vote: V
     else -> "투표 전"
 }
 
+/** 용병 한 줄. 계정이 없는 더미라 시간표 보기 버튼이 없다. */
+@Composable
+private fun MercenaryRow(label: String, period: String, onRemove: (() -> Unit)?, busy: Boolean) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.size(56.dp))
+        Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            Text("용병 · ${period}만", style = MaterialTheme.typography.bodySmall)
+        }
+        if (onRemove != null) TextButton(enabled = !busy, onClick = onRemove) { Text("빼기") }
+    }
+}
+
+/**
+ * 이번 주기 용병: 내가 못 가면 용병으로 대체하고, 파티장은 임시 용병을 추가한다.
+ * 확정 전, 또는 확정 후 레이드 시작 전에만 보인다.
+ */
+@Composable
+private fun MercenaryCard(uid: String, party: Party, schedule: Schedule, busy: Boolean, onAsk: (Confirm) -> Unit) {
+    val word = periodWord(schedule)
+    val mine = schedule.replacementOf(uid)
+    val lastOne = party.participantUids(schedule).size <= 1
+    val full = party.memberUids.size + schedule.extraMercenaryCount >= MAX_PARTY_SIZE
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("$word 용병", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (schedule.state == "LOCKED") {
+                    "확정된 시간은 그대로 두고, 못 가는 파티원을 용병으로 대체하거나 용병을 더할 수 있습니다(레이드 시작 전까지)."
+                } else {
+                    "못 가는 파티원은 용병으로 대체하면 입력·투표에서 빠지고, 나머지로 다시 추천합니다. 용병은 분배금 1인분을 받습니다."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            when {
+                mine != null && schedule.canCancelReplacement ->
+                    OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.MercenaryRemove(mine)) }) {
+                        Text("대체 취소")
+                    }
+                mine != null -> Text("${word}는 용병으로 대체했습니다. 확정된 뒤에는 취소할 수 없습니다.", style = MaterialTheme.typography.bodySmall)
+                !lastOne ->
+                    OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.MercenaryReplace) }) {
+                        Text("$word 용병으로 대체")
+                    }
+            }
+            if (party.leaderUid == uid) {
+                if (full) {
+                    Text("파티 인원이 가득 차 용병을 더할 수 없습니다(최대 ${MAX_PARTY_SIZE}명).", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.MercenaryAdd) }) {
+                        Text("임시 용병 추가")
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun MemberRow(
     member: PartyMember,
@@ -730,7 +908,10 @@ private fun ScheduleSection(
     onAsk: (Confirm) -> Unit,
     onRespondToChange: (approve: Boolean) -> Unit,
 ) {
-    val memberCount = party.memberUids.size
+    // 이번 주기 참여 파티원 (용병으로 대체한 사람 제외)
+    val participants = party.participantUids(schedule)
+    val memberCount = participants.size
+    val replaced = schedule?.isReplaced(uid) == true
     val confirmed = schedule?.confirmed
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
@@ -781,12 +962,19 @@ private fun ScheduleSection(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        if (myUnavailable?.submitted == true) "전원이 제출하면 추천 시간이 나옵니다."
-                        else "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요.",
+                        when {
+                            replaced -> "이번 주기는 용병으로 대체했습니다. 나머지 파티원이 조율합니다. 파티 탭에서 대체를 취소할 수 있습니다."
+                            myUnavailable?.submitted == true -> "전원이 제출하면 추천 시간이 나옵니다."
+                            else -> "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                     )
                 } else {
-                    CandidateVoting(schedule, early, memberCount, votes, myVote, isLeader, busy, onVote, onAsk)
+                    // 참여 파티원의 투표만 센다.
+                    CandidateVoting(
+                        schedule, early, memberCount, votes.filterKeys { it in participants }, myVote, canVote = !replaced,
+                        isLeader, busy, onVote, onAsk,
+                    )
                 }
             }
         }
@@ -810,9 +998,19 @@ private fun LockedSchedule(
         Column(modifier = Modifier.padding(16.dp)) {
             Text("확정된 시간", style = MaterialTheme.typography.labelMedium)
             Text(TimeSlots.range(confirmed.startMs, confirmed.endMs), style = MaterialTheme.typography.titleLarge)
+            if (schedule.mercenaries.isNotEmpty()) {
+                Text(
+                    "참여: 파티원 ${confirmed.memberUids.size}명 + 용병 ${schedule.mercenaries.size}명",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 
+    if (schedule.isReplaced(uid)) {
+        Text("이 레이드는 용병으로 대체했습니다. 결과 기록과 변경 요청은 참여하는 파티원이 합니다.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
     if (now >= confirmed.startMs) {
         Text(
             if (now >= confirmed.endMs) "레이드가 끝났나요? 결과를 기록해 주세요." else "레이드 진행 중입니다. 끝나면 결과를 기록해 주세요.",
@@ -873,6 +1071,8 @@ private fun CandidateVoting(
     memberCount: Int,
     votes: Map<String, Vote>,
     myVote: Vote?,
+    /** 용병으로 대체한 사람은 투표하지 않는다(파티장이면 확정은 한다) */
+    canVote: Boolean,
     isLeader: Boolean,
     busy: Boolean,
     onVote: (agreed: List<Int>, round: Int) -> Unit,
@@ -886,17 +1086,20 @@ private fun CandidateVoting(
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "가능한 시간에 모두 동의해 주세요. 전원이 동의한 시간 중에서 파티장이 확정합니다.",
+                if (canVote) "가능한 시간에 모두 동의해 주세요. 전원이 동의한 시간 중에서 파티장이 확정합니다."
+                else "이번 주기는 용병으로 대체해 투표하지 않습니다. 나머지 파티원이 투표합니다.",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
             )
             // 한 번에 전부 고르거나 비운다. 투표는 아래 버튼으로 보낸다(골라 놓고 몇 개만 뺄 수 있게).
             val allSelected = schedule.candidates.indices.all { it in selected }
-            TextButton(
-                enabled = !busy,
-                onClick = { selected = if (allSelected) emptySet() else schedule.candidates.indices.toSet() },
-            ) {
-                Text(if (allSelected) "모두 해제" else "모두 가능")
+            if (canVote) {
+                TextButton(
+                    enabled = !busy,
+                    onClick = { selected = if (allSelected) emptySet() else schedule.candidates.indices.toSet() },
+                ) {
+                    Text(if (allSelected) "모두 해제" else "모두 가능")
+                }
             }
         }
         schedule.candidates.forEachIndexed { index, candidate ->
@@ -916,11 +1119,11 @@ private fun CandidateVoting(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !busy) { selected = if (checked) selected - index else selected + index }
+                    .clickable(enabled = !busy && canVote) { selected = if (checked) selected - index else selected + index }
                     .padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Checkbox(checked = checked, onCheckedChange = null)
+                if (canVote) Checkbox(checked = checked, onCheckedChange = null)
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(
                         "${TimeSlots.time(candidate.startMs)} ~ ${TimeSlots.time(candidate.endMs)}",
@@ -937,18 +1140,20 @@ private fun CandidateVoting(
                 }
             }
         }
-        OutlinedButton(
-            enabled = !busy && (savedVote == null || savedVote.agreed.toSet() != selected),
-            modifier = Modifier.fillMaxWidth(),
-            onClick = { onVote(selected.toList(), schedule.round) },
-        ) {
-            Text(
-                when {
-                    savedVote == null && selected.isEmpty() -> "모두 안 됨으로 투표"
-                    savedVote == null -> "투표하기"
-                    else -> "투표 바꾸기"
-                },
-            )
+        if (canVote) {
+            OutlinedButton(
+                enabled = !busy && (savedVote == null || savedVote.agreed.toSet() != selected),
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onVote(selected.toList(), schedule.round) },
+            ) {
+                Text(
+                    when {
+                        savedVote == null && selected.isEmpty() -> "모두 안 됨으로 투표"
+                        savedVote == null -> "투표하기"
+                        else -> "투표 바꾸기"
+                    },
+                )
+            }
         }
         Text(
             when {

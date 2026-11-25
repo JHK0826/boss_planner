@@ -35,6 +35,7 @@ class PartyStatusTest {
         settlement: Settlement? = null,
         periodEnd: Long = start + 7 * 24 * hour,
         periodStart: Long = start,
+        mercenaries: List<Mercenary> = emptyList(),
     ) = Schedule(
         id = id,
         state = state,
@@ -51,6 +52,7 @@ class PartyStatusTest {
         retryCount = 0,
         expiredReason = null,
         settlement = settlement,
+        mercenaries = mercenaries,
     )
 
     private fun snapshot(
@@ -118,6 +120,22 @@ class PartyStatusTest {
     fun `재조정 중이면 앞에 표시한다`() {
         val retry = schedule(state = "RETRY")
         assertEquals(PartyStatus("재조정 · 다른 파티원 입력 대기 (1/2)", false), status("a", snapshot(retry, submitted = setOf("a"))))
+    }
+
+    @Test
+    fun `용병으로 대체한 사람은 입력·투표·결과 기록을 하지 않고, 나머지만 센다`() {
+        val replacedB = listOf(Mercenary("merc_1", "용병", "b"))
+        assertEquals(PartyStatus("용병으로 대체", false), status("b", snapshot(schedule(mercenaries = replacedB))))
+        assertEquals(
+            PartyStatus("다른 파티원 투표 대기 (1/1)", false),
+            status("a", snapshot(schedule(mercenaries = replacedB, candidates = 2), submitted = setOf("a"), votedRound = mapOf("a" to 1))),
+        )
+        val raid = now + 2 * hour
+        assertEquals(PartyStatus("용병으로 대체", false), status("b", snapshot(schedule(state = "LOCKED", confirmedAt = raid, mercenaries = replacedB)), at = raid))
+        // 파티장이 대체했어도 확정은 파티장의 할 일
+        val replacedA = listOf(Mercenary("merc_2", "용병", "a"))
+        val snap = snapshot(schedule(mercenaries = replacedA, candidates = 2, unanimous = listOf(0)), submitted = setOf("b"), votedRound = mapOf("b" to 1))
+        assertEquals(PartyStatus("일정 확정", true), status("a", snap))
     }
 
     @Test

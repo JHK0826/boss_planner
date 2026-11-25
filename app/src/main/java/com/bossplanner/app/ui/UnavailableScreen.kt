@@ -196,7 +196,7 @@ fun UnavailableScreen(
 
 /**
  * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출하고, 제출한 파티 수를 돌려준다.
- * 주기가 다른 파티(주간 ↔ 월간)나 이미 확정된 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
+ * 주기가 다른 파티(주간 ↔ 월간), 이미 확정된 파티, 그 주기를 용병으로 대체한 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
  */
 private suspend fun submitToOtherParties(
     parties: PartyRepository,
@@ -210,7 +210,7 @@ private suspend fun submitToOtherParties(
         try {
             val schedule = parties.latestScheduleOnce(party.id) ?: continue
             val samePeriod = schedule.periodStartMs == target.periodStartMs && schedule.periodEndMs == target.periodEndMs
-            if (schedule.acceptsInput && samePeriod) {
+            if (schedule.acceptsInput && samePeriod && !schedule.isReplaced(uid)) {
                 parties.setUnavailable(party.id, schedule.id, uid, slots, submitted = true)
                 submitted++
             }

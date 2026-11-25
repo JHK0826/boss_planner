@@ -51,6 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.bossplanner.app.data.ChatMessage
 import com.bossplanner.app.data.ImageCompressor
+import com.bossplanner.app.data.Mercenary
 import com.bossplanner.app.data.Money
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.PartyRepository
@@ -58,6 +59,8 @@ import com.bossplanner.app.data.Schedule
 import com.bossplanner.app.data.SettlementCalc
 import com.bossplanner.app.data.SettlementEntry
 import com.bossplanner.app.data.TimeSlots
+import com.bossplanner.app.data.isMercenaryId
+import com.bossplanner.app.data.mercenaryLabel
 import com.bossplanner.app.data.userMessage
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.storage.StorageException
@@ -119,7 +122,9 @@ fun SettlementContent(
                 busy = busy,
                 onRegister = { sale, fee, weights -> run("분배금을 등록했습니다. 파티원에게 알림을 보냈습니다") { parties.registerSettlement(partyId, periodId, sale, fee, weights) } },
                 onMarkPaid = { recipient ->
-                    run("${currentParty.nameOf(recipient)}님에게 지급함으로 표시했습니다") { parties.markPaid(partyId, periodId, recipient) }
+                    val message = if (isMercenaryId(recipient)) "${currentParty.nameOf(recipient, currentSchedule.mercenaries)}에게 직접 지급했습니다"
+                    else "${currentParty.nameOf(recipient)}님에게 지급함으로 표시했습니다"
+                    run(message) { parties.markPaid(partyId, periodId, recipient) }
                 },
                 onConfirmReceived = { run("수령을 확인했습니다") { parties.confirmReceived(partyId, periodId) } },
             )
@@ -145,8 +150,10 @@ fun SettlementContent(
     }
 }
 
-private fun Party.nameOf(uid: String): String =
-    members[uid]?.let { it.displayName.ifBlank { it.characterName } } ?: "파티원"
+/** 이름: 파티원 또는 그 주기 용병 */
+private fun Party.nameOf(uid: String, mercenaries: List<Mercenary> = emptyList()): String =
+    mercenaries.firstOrNull { it.id == uid }?.let { mercenaryLabel(it) }
+        ?: members[uid]?.let { it.displayName.ifBlank { it.characterName } } ?: "파티원"
 
 @Composable
 private fun SettlementStatus(
@@ -165,7 +172,9 @@ private fun SettlementStatus(
     val canEdit = settlement == null || (isSeller && entries.all { it.status == "PENDING" } && !settlement.completed)
     var editing by remember(settlement) { mutableStateOf(settlement == null) }
     // 이 레이드에 참여한 사람 (확정 당시 파티원)
-    val participants = schedule.confirmed?.memberUids?.takeIf { it.isNotEmpty() } ?: party.memberUids
+    // 이 레이드에 참여한 사람 (확정 당시 파티원) + 용병. 용병은 1인분을 받고 판매자가 직접 지급한다.
+    val mercenaries = schedule.mercenaries
+    val participants = (schedule.confirmed?.memberUids?.takeIf { it.isNotEmpty() } ?: party.memberUids) + mercenaries.map { it.id }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (schedule.state != "SETTLED") {
@@ -193,14 +202,16 @@ private fun SettlementStatus(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "${party.nameOf(entry.uid)}${if (entry.uid == uid) " (나)" else ""} 정산금",
+                            "${party.nameOf(entry.uid, mercenaries)}${if (entry.uid == uid) " (나)" else ""} 정산금",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(Money.meso(entry.amount), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            when (entry.status) {
-                                "PAID" -> "지급함 · 수령 확인 대기"
-                                "RECEIVED" -> "수령 확인"
+                            when {
+                                isMercenaryId(entry.uid) && entry.status == "RECEIVED" -> "직접 지급 완료"
+                                isMercenaryId(entry.uid) -> "대기 · 판매자가 게임에서 직접 지급"
+                                entry.status == "PAID" -> "지급함 · 수령 확인 대기"
+                                entry.status == "RECEIVED" -> "수령 확인"
                                 else -> "대기"
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -210,7 +221,9 @@ private fun SettlementStatus(
                     }
                     when {
                         isSeller && entry.status == "PENDING" ->
-                            Button(enabled = !busy, onClick = { onMarkPaid(entry.uid) }) { Text("지급함") }
+                            Button(enabled = !busy, onClick = { onMarkPaid(entry.uid) }) {
+                                Text(if (isMercenaryId(entry.uid)) "직접 지급함" else "지급함")
+                            }
                         entry.uid == uid && entry.status == "PAID" ->
                             Button(enabled = !busy, onClick = onConfirmReceived) { Text("수령 확인") }
                     }
@@ -229,6 +242,7 @@ private fun SettlementStatus(
                 sellerUid = uid,
                 party = party,
                 participants = participants,
+                mercenaries = mercenaries,
                 registered = settlement != null,
                 busy = busy,
                 onRegister = onRegister,
@@ -241,13 +255,14 @@ private fun SettlementStatus(
 
 /**
  * 분배금 계산·등록. 경매장 판매액과 수수료를 넣으면 실수령액과 파티원 정산금을 바로 보여 준다.
- * 등록하는 사람이 판매자다. 인원은 이 레이드에 참여한 파티원으로 고정이다.
+ * 등록하는 사람이 판매자다. 인원은 이 레이드에 참여한 파티원과 그 주기 용병으로 고정이다.
  */
 @Composable
 private fun SettlementForm(
     sellerUid: String,
     party: Party,
     participants: List<String>,
+    mercenaries: List<Mercenary>,
     registered: Boolean,
     busy: Boolean,
     onRegister: (saleAmount: Long, feePercent: Int, weights: Map<String, Int>) -> Unit,
@@ -320,7 +335,7 @@ private fun SettlementForm(
             participants.forEach { member ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        party.nameOf(member) + if (member == sellerUid) " (판매자)" else "",
+                        party.nameOf(member, mercenaries) + if (member == sellerUid) " (판매자)" else "",
                         modifier = Modifier.weight(1f),
                     )
                     OutlinedTextField(
@@ -345,12 +360,16 @@ private fun SettlementForm(
                     if (detailed) {
                         recipients.forEach { member ->
                             val amount = amounts[member] ?: 0
-                            Text("${party.nameOf(member)} 정산금", style = MaterialTheme.typography.labelMedium)
+                            Text("${party.nameOf(member, mercenaries)} 정산금", style = MaterialTheme.typography.labelMedium)
                             Text("${Money.meso(amount)} (${Money.korean(amount)})", style = MaterialTheme.typography.titleMedium)
                         }
                     } else {
                         val amount = amounts.values.first()
-                        Text("파티원 1인 정산금 (${recipients.size}명)", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            if (mercenaries.isNotEmpty()) "1인 정산금 (${recipients.size}명 · 용병 ${mercenaries.size}명 포함)"
+                            else "파티원 1인 정산금 (${recipients.size}명)",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
                         Text("${Money.meso(amount)} (${Money.korean(amount)})", style = MaterialTheme.typography.titleLarge)
                     }
                     Text(
