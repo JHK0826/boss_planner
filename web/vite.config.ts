@@ -10,10 +10,10 @@ const versionName =
   readFileSync(new URL("../version.properties", import.meta.url), "utf8").match(/^versionName=(.+)$/m)?.[1] ?? "?";
 
 /**
- * NEXON Open API 애널리틱스 (애플리케이션 app_id 368630).
+ * NEXON Open API 애널리틱스 (애플리케이션 app_id 372535).
  * 배포용 빌드에만 넣는다: 개발 서버와 E2E 테스트에서는 외부로 요청하지 않는다.
  */
-const NEXON_ANALYTICS_APP_ID = "368630";
+const NEXON_ANALYTICS_APP_ID = "372535";
 function nexonAnalytics(): Plugin {
   return {
     name: "nexon-analytics",
