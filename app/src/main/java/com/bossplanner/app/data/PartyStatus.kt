@@ -64,15 +64,19 @@ object PartyStatuses {
         } else {
             when (current.state) {
                 "OPEN", "RETRY" -> {
+                    // 이번 주 레이드가 끝나 미리 연 다음 주 일정: 입력·투표는 할 일, 확정은 목요일부터
+                    val upcoming = current.isUpcoming(nowMs)
+                    val prefix = if (upcoming) "다음 주 " else ""
                     val submitted = party.memberUids.count { snapshot.unavailable[it]?.submitted == true }
                     val voted = party.memberUids.count { snapshot.votes[it]?.round == current.round }
                     when {
-                        snapshot.unavailable[uid]?.submitted != true -> todos += "불가 시간 입력"
-                        current.candidates.isEmpty() -> info = "다른 파티원 입력 대기 ($submitted/$members)"
-                        snapshot.votes[uid]?.round != current.round -> todos += "투표"
+                        snapshot.unavailable[uid]?.submitted != true -> todos += "${prefix}불가 시간 입력"
+                        current.candidates.isEmpty() -> info = "${prefix}다른 파티원 입력 대기 ($submitted/$members)"
+                        snapshot.votes[uid]?.round != current.round -> todos += "${prefix}투표"
+                        current.unanimous.isNotEmpty() && upcoming -> info = "다음 주 전원 동의 · 목요일부터 확정 가능"
                         current.unanimous.isNotEmpty() && isLeader -> todos += "일정 확정"
                         current.unanimous.isNotEmpty() -> info = "파티장 확정 대기"
-                        else -> info = "다른 파티원 투표 대기 ($voted/$members)"
+                        else -> info = "${prefix}다른 파티원 투표 대기 ($voted/$members)"
                     }
                     if (current.state == "RETRY" && info.isNotEmpty()) info = "재조정 · $info"
                 }

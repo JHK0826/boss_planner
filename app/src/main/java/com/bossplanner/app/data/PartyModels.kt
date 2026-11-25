@@ -65,7 +65,13 @@ data class Schedule(
 
     /** 불가 시간 입력·투표·확정을 받는 상태 (처음 조율 또는 미클리어 후 재조정) */
     val acceptsInput: Boolean get() = state == "OPEN" || state == "RETRY"
+
+    /** 이번 주 레이드가 끝나 미리 연 다음 주 일정인가 (주기가 아직 시작하지 않음). 확정은 주기가 시작한 뒤에만 된다. */
+    fun isUpcoming(nowMs: Long): Boolean = periodStartMs > nowMs
 }
+
+/** 지금 진행 중인 주기의 일정 (미리 연 다음 주 일정이 맨 앞에 있어도 이번 주 것을 찾는다) */
+fun List<Schedule>.currentPeriod(nowMs: Long): Schedule? = firstOrNull { it.periodStartMs <= nowMs && nowMs < it.periodEndMs }
 
 /** memberUids: 확정 당시 파티원 = 이 레이드에 참여한 사람 */
 data class Confirmed(val startMs: Long, val endMs: Long, val memberUids: List<String>)

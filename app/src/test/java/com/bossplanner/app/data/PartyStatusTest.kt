@@ -34,10 +34,11 @@ class PartyStatusTest {
         changeRequest: ChangeRequest? = null,
         settlement: Settlement? = null,
         periodEnd: Long = start + 7 * 24 * hour,
+        periodStart: Long = start,
     ) = Schedule(
         id = id,
         state = state,
-        periodStartMs = start,
+        periodStartMs = periodStart,
         periodEndMs = periodEnd,
         inputDeadlineMs = start + 24 * hour,
         durationSlots = 2,
@@ -182,5 +183,21 @@ class PartyStatusTest {
         assertEquals(TabTodos(schedule = false, settlement = true), TabTodos.of(fullStatus("b", snapshot(settled, settlements = paid))))
         assertEquals(TabTodos(schedule = false, settlement = false), TabTodos.of(fullStatus("a", snapshot())))
         assertEquals(TabTodos(schedule = false, settlement = false), TabTodos.of(null))
+    }
+
+    @Test
+    fun `미리 연 다음 주 일정은 다음 주 할 일로 보이고 확정은 목요일부터라 안내만 한다`() {
+        val upcoming = schedule(periodStart = now + 24 * hour, periodEnd = now + 8 * 24 * hour)
+        val settled = schedule(state = "SETTLED", id = "W-0")
+        assertEquals(PartyStatus("다음 주 불가 시간 입력", true), status("a", snapshot(upcoming, settled)))
+        val voting = upcoming.copy(round = 2, candidates = listOf(Candidate("s0", now + 30 * hour, now + 31 * hour)))
+        assertEquals(PartyStatus("다음 주 투표", true), status("a", snapshot(voting, submitted = setOf("a", "b"))))
+        val agreed = voting.copy(unanimous = listOf(0))
+        assertEquals(
+            PartyStatus("다음 주 전원 동의 · 목요일부터 확정 가능", false),
+            status("a", snapshot(agreed, submitted = setOf("a", "b"), votedRound = mapOf("a" to 2, "b" to 2))),
+        )
+        assertEquals(TabTodos(schedule = true, settlement = false), TabTodos.of(fullStatus("a", snapshot(upcoming))))
+        assertEquals("W-0", listOf(upcoming, settled).currentPeriod(now)?.id)
     }
 }

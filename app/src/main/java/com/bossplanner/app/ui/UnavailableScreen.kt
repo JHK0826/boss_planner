@@ -99,7 +99,16 @@ fun UnavailableScreen(
     BackHandler(enabled = !busy, onBack = onDone)
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("불가 시간 입력", style = MaterialTheme.typography.headlineSmall)
+        // 이번 주 레이드가 끝나 미리 연 다음 주 일정
+        if (target.periodStartMs > now) {
+            Text("다음 주 불가 시간 입력", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "${TimeSlots.dayWithWeekday(target.periodStartMs)} ~ ${TimeSlots.dayWithWeekday(target.periodEndMs - 1)} · 미리 입력",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        } else {
+            Text("불가 시간 입력", style = MaterialTheme.typography.headlineSmall)
+        }
         Text(
             when {
                 prefilled -> "고정 불가 시간으로 채워 두었습니다. 이번 주기에 달라진 부분만 고치고 제출해 주세요."

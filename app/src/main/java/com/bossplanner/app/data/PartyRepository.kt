@@ -65,13 +65,13 @@ class PartyRepository(
     /**
      * 파티 목록의 상태 표시에 필요한 일정 데이터를 실시간으로 모은다.
      *
-     * - 일정은 이번 주기와 바로 전 주기 두 개만 읽는다(지난 주기의 끝나지 않은 정산을 찾는 데 충분하다).
+     * - 일정은 최근 세 개(미리 연 다음 주, 이번 주, 지난 주)만 읽는다(지난 주기의 끝나지 않은 정산을 찾는 데 충분하다).
      * - 입력·투표 중이면 그 일정의 불가 시간과 투표를, 정산 중인 일정은 분배금 상태를 함께 지켜본다.
      * - 이 하위 구독은 "무엇을 지켜봐야 하는지"가 바뀔 때만 다시 붙인다. 후보나 동의 상태처럼
      *   일정 문서의 다른 값이 바뀔 때는 그대로 두고, 바뀐 일정만 화면에 반영한다.
      */
     fun partySnapshot(partyId: String): Flow<PartySnapshot> =
-        recentSchedules(partyId, limit = 2).withDetails(
+        recentSchedules(partyId, limit = 3).withDetails(
             keyOf = SnapshotTargets::of,
             details = { targets -> snapshotDetails(partyId, targets) },
         ) { schedules, details ->

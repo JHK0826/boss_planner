@@ -71,6 +71,7 @@ import com.bossplanner.app.data.PartyRepository
 import com.bossplanner.app.data.PartySnapshot
 import com.bossplanner.app.data.PartyStatuses
 import com.bossplanner.app.data.TabTodos
+import com.bossplanner.app.data.currentPeriod
 import com.bossplanner.app.data.Schedule
 import com.bossplanner.app.data.TimeSlots
 import com.bossplanner.app.data.Unavailable
@@ -208,6 +209,7 @@ fun PartyScreen(
                 PartyTab.Schedule -> ScheduleTab(
                     party = party,
                     schedule = schedule,
+                    thisWeek = schedules.orEmpty().currentPeriod(now),
                     loading = scheduleState == null,
                     unavailable = unavailable,
                     votes = votes,
@@ -465,6 +467,8 @@ private fun PartyInfoTab(
 private fun ScheduleTab(
     party: Party,
     schedule: Schedule?,
+    /** 지금 진행 중인 주기의 일정. 다음 주를 미리 열었으면 이번 주 결과를 한 줄로 보여 준다 */
+    thisWeek: Schedule?,
     loading: Boolean,
     unavailable: Map<String, Unavailable>,
     votes: Map<String, Vote>,
@@ -477,11 +481,31 @@ private fun ScheduleTab(
     onEditUnavailable: (UnavailableTarget) -> Unit,
 ) {
     val isLeader = party.leaderUid == uid
+    // 이번 주 레이드가 끝나 미리 연 다음 주 일정 (확정은 목요일부터)
+    val upcoming = schedule?.isUpcoming(now) == true
     TabColumn {
-        Text("이번 주기 일정", style = MaterialTheme.typography.titleMedium)
+        if (upcoming && schedule != null) {
+            thisWeek?.let { week ->
+                thisWeekResult(week).takeIf { it.isNotEmpty() }?.let {
+                    Text(it, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Text(
+                "다음 주 일정 (${TimeSlots.dayWithWeekday(schedule.periodStartMs)} ~ ${TimeSlots.dayWithWeekday(schedule.periodEndMs - 1)}) 미리 조율",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                "이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간 입력과 투표를 먼저 하고, 확정은 목요일 00:00부터 할 수 있습니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text("이번 주기 일정", style = MaterialTheme.typography.titleMedium)
+        }
         ScheduleSection(
             party = party,
             schedule = schedule,
+            early = upcoming,
             loading = loading,
             myUnavailable = unavailable[uid],
             submittedCount = party.memberUids.count { unavailable[it]?.submitted == true },
@@ -521,7 +545,7 @@ private fun ScheduleTab(
                     )
                 },
             ) {
-                Text(if (unavailable[uid]?.submitted == true) "불가 시간 수정" else "불가 시간 입력")
+                Text((if (upcoming) "다음 주 " else "") + if (unavailable[uid]?.submitted == true) "불가 시간 수정" else "불가 시간 입력")
             }
         }
     }
@@ -691,6 +715,8 @@ private fun MemberRow(
 private fun ScheduleSection(
     party: Party,
     schedule: Schedule?,
+    /** 미리 연 다음 주 일정 (확정은 목요일부터) */
+    early: Boolean,
     loading: Boolean,
     myUnavailable: Unavailable?,
     submittedCount: Int,
@@ -751,7 +777,7 @@ private fun ScheduleSection(
                 if (schedule.candidates.isEmpty()) {
                     Text(
                         "불가 시간 제출 $submittedCount/${memberCount}명" +
-                            if (schedule.state == "OPEN") " · 마감 ${TimeSlots.dateTime(schedule.inputDeadlineMs - 60_000)}" else "",
+                            if (schedule.state == "OPEN" && !early) " · 마감 ${TimeSlots.dateTime(schedule.inputDeadlineMs - 60_000)}" else "",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
@@ -760,7 +786,7 @@ private fun ScheduleSection(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 } else {
-                    CandidateVoting(schedule, memberCount, votes, myVote, isLeader, busy, onVote, onAsk)
+                    CandidateVoting(schedule, early, memberCount, votes, myVote, isLeader, busy, onVote, onAsk)
                 }
             }
         }
@@ -842,6 +868,8 @@ private fun LockedSchedule(
 @Composable
 private fun CandidateVoting(
     schedule: Schedule,
+    /** 미리 연 다음 주 일정이면 확정 버튼을 보여 주지 않는다 (확정은 목요일부터) */
+    early: Boolean,
     memberCount: Int,
     votes: Map<String, Vote>,
     myVote: Vote?,
@@ -904,7 +932,7 @@ private fun CandidateVoting(
                         color = if (unanimous) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (unanimous && isLeader) {
+                if (unanimous && isLeader && !early) {
                     Button(enabled = !busy, onClick = { onAsk(Confirm.Lock(index, label)) }) { Text("확정") }
                 }
             }
@@ -924,6 +952,7 @@ private fun CandidateVoting(
         }
         Text(
             when {
+                schedule.unanimous.isNotEmpty() && early -> "전원이 동의한 시간이 있습니다. 목요일 00:00부터 파티장이 확정할 수 있습니다."
                 schedule.unanimous.isNotEmpty() && isLeader -> "전원이 동의한 시간 중 하나를 확정해 주세요."
                 schedule.unanimous.isNotEmpty() -> "전원이 동의한 시간이 있습니다. 파티장의 확정을 기다립니다."
                 currentVotes.size < memberCount -> "투표 ${currentVotes.size}/${memberCount}명. 전원이 투표했는데 전원 동의가 없으면 다음 후보로 넘어갑니다."
@@ -1003,4 +1032,14 @@ private fun MemberTimetableDialog(
             }
         }
     }
+}
+
+/** 미리 연 다음 주 일정 위에 보여 줄 이번 주 결과 한 줄 */
+private fun thisWeekResult(schedule: Schedule): String = when (schedule.state) {
+    "SETTLED" -> "이번 주 클리어 완료" +
+        (schedule.confirmed?.let { " · ${TimeSlots.range(it.startMs, it.endMs)}" } ?: "") +
+        ". 분배금은 정산 탭에서 정산합니다."
+    "SKIPPED" -> "이번 주는 진행하지 않았습니다."
+    "EXPIRED" -> "이번 주 일정이 종료됐습니다."
+    else -> ""
 }
