@@ -139,6 +139,18 @@ class PartyStatusTest {
     }
 
     @Test
+    fun `투표 없이 자동 지정하는 일정은 투표·확정 할 일이 없고, 미리 연 다음 주면 1위 예정 시간을 보여 준다`() {
+        val plannedStart = now + 3 * 24 * hour
+        val upcoming = schedule(periodStart = now + 24 * hour, periodEnd = now + 8 * 24 * hour, round = 2)
+            .copy(assignMode = "AUTO", candidates = listOf(Candidate("x", plannedStart, plannedStart + hour, 5, emptyList())))
+        assertEquals(
+            PartyStatus("자동 지정 예정 ${TimeSlots.dateTime(plannedStart)}", false),
+            status("a", snapshot(upcoming, submitted = setOf("a", "b"))),
+        )
+        assertEquals(PartyStatus("다음 주 불가 시간 입력", true), status("b", snapshot(upcoming, submitted = setOf("a"))))
+    }
+
+    @Test
     fun `확정 뒤에는 레이드가 시작되면 결과 기록`() {
         val raid = now + 2 * hour
         val locked = schedule(state = "LOCKED", confirmedAt = raid)

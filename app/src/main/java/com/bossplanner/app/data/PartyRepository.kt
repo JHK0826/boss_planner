@@ -319,6 +319,7 @@ class PartyRepository(
         characterId: String,
         preferredWindow: PreferredWindow?,
         minLeadMinutes: Int,
+        autoAssign: Boolean,
     ): String {
         val data = mutableMapOf<String, Any>(
             "name" to name,
@@ -326,6 +327,7 @@ class PartyRepository(
             "durationMinutes" to durationMinutes,
             "characterId" to characterId,
             "minLeadMinutes" to minLeadMinutes,
+            "autoAssign" to autoAssign,
         )
         if (preferredWindow != null) data["preferredWindow"] = preferredWindow.toMap()
         return call("createParty", data)["partyId"] as? String ?: ""
@@ -336,14 +338,20 @@ class PartyRepository(
         call("startSchedule", mapOf("partyId" to partyId))
     }
 
-    /** 파티장이 추천 설정을 바꾼다. 조율 중이면 서버가 후보를 다시 계산한다. */
-    suspend fun updatePartyPreferences(partyId: String, preferredWindow: PreferredWindow?, minLeadMinutes: Int) {
+    /** 파티장이 추천 설정을 바꾼다. 조율 중이면 서버가 후보를 다시 계산한다(자동 지정이면 바로 확정될 수 있다). */
+    suspend fun updatePartyPreferences(partyId: String, preferredWindow: PreferredWindow?, minLeadMinutes: Int, autoAssign: Boolean) {
         // 선호 시간대를 없앨 때는 null을 보내야 한다.
         val data = HashMap<String, Any?>()
         data["partyId"] = partyId
         data["minLeadMinutes"] = minLeadMinutes
         data["preferredWindow"] = preferredWindow?.toMap()
+        data["autoAssign"] = autoAssign
         functions.getHttpsCallable("updatePartyPreferences").call(data).await()
+    }
+
+    /** 투표 없이 자동으로 정한 일정을 파티장이 다른 순위 후보로 바꾼다 (레이드 4시간 전까지). */
+    suspend fun switchAssignedCandidate(partyId: String, periodId: String, candidateIndex: Int) {
+        call("switchAssignedCandidate", mapOf("partyId" to partyId, "periodId" to periodId, "candidateIndex" to candidateIndex))
     }
 
     /**
@@ -427,6 +435,7 @@ class PartyRepository(
             },
             // 설정이 없는 예전 파티에는 서버 기본값(3시간)이 적용된다.
             minLeadMinutes = doc.getLong("minLeadMinutes")?.toInt() ?: 180,
+            autoAssign = doc.getBoolean("autoAssign") == true,
         )
     }
 
@@ -456,6 +465,8 @@ class PartyRepository(
                     slotId = c["slotId"] as? String ?: return@mapNotNull null,
                     startMs = (c["start"] as? Timestamp)?.toMillis() ?: return@mapNotNull null,
                     endMs = (c["end"] as? Timestamp)?.toMillis() ?: return@mapNotNull null,
+                    score = (c["score"] as? Number)?.toInt(),
+                    reasons = (c["reasons"] as? List<*>)?.filterIsInstance<String>().orEmpty(),
                 )
             },
             unanimous = (doc.get("unanimous") as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
@@ -496,6 +507,8 @@ class PartyRepository(
                     replaces = m["replaces"] as? String,
                 )
             },
+            assignMode = if (doc.getString("assignMode") == "AUTO") "AUTO" else "VOTE",
+            confirmedBy = doc.getString("confirmedBy"),
         )
     }
 }

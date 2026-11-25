@@ -77,6 +77,9 @@ object PartyStatuses {
                         replaced -> info = "${prefix}용병으로 대체"
                         snapshot.unavailable[uid]?.submitted != true -> todos += "${prefix}불가 시간 입력"
                         current.candidates.isEmpty() -> info = "${prefix}다른 파티원 입력 대기 ($submitted/$members)"
+                        // 투표 없이 자동 지정: 투표·확정 할 일이 없다. 미리 연 다음 주면 1위 예정 시간을 보여 준다.
+                        current.isAutoAssigned ->
+                            info = if (upcoming) "자동 지정 예정 ${TimeSlots.dateTime(current.candidates.first().startMs)}" else "자동 지정 중"
                         snapshot.votes[uid]?.round != current.round -> todos += "${prefix}투표"
                         current.unanimous.isNotEmpty() && upcoming -> info = "다음 주 전원 동의 · 목요일부터 확정 가능"
                         current.unanimous.isNotEmpty() && isLeader -> todos += "일정 확정"

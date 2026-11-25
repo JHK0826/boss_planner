@@ -29,6 +29,8 @@ data class Party(
     val preferredWindow: PreferredWindow?,
     /** 지금으로부터 이 시간(분) 안에 시작하는 후보는 추천하지 않는다 */
     val minLeadMinutes: Int,
+    /** 투표 없이 점수 1위 시간으로 자동 지정 */
+    val autoAssign: Boolean = false,
 ) {
     val isWeekly: Boolean get() = cycle == "WEEKLY"
     val bossLabel: String get() = Bosses.label(bosses)
@@ -37,7 +39,14 @@ data class Party(
 /** 파티 선호 시간대: 요일(1=월 ~ 7=일)과 하루 안의 30분 칸 범위 [startRow, endRow) */
 data class PreferredWindow(val days: List<Int>, val startRow: Int, val endRow: Int)
 
-data class Candidate(val slotId: String, val startMs: Long, val endMs: Long)
+/** 추천 후보. score·reasons는 추천 점수와 이유 코드 (예전 후보에는 없다) */
+data class Candidate(
+    val slotId: String,
+    val startMs: Long,
+    val endMs: Long,
+    val score: Int? = null,
+    val reasons: List<String> = emptyList(),
+)
 
 data class Schedule(
     val id: String,
@@ -61,7 +70,14 @@ data class Schedule(
     val settlement: Settlement?,
     /** 이번 주기 용병 (대체 용병 + 파티장이 추가한 임시 용병) */
     val mercenaries: List<Mercenary> = emptyList(),
+    /** 후보를 고른 방식: VOTE(투표) 또는 AUTO(투표 없이 자동 지정, 후보는 점수순) */
+    val assignMode: String = "VOTE",
+    /** 누가 확정했는가: LEADER 또는 AUTO. 확정 전이면 null */
+    val confirmedBy: String? = null,
 ) {
+    /** 투표 없이 자동 지정하는 일정 (후보가 점수순 순위다) */
+    val isAutoAssigned: Boolean get() = assignMode == "AUTO"
+
     /** 이번 주기를 용병으로 대체한 파티원 */
     val replacedUids: Set<String> get() = mercenaries.mapNotNull { it.replaces }.toSet()
 
