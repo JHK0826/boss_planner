@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { FieldPath, Timestamp, type Firestore } from "firebase-admin/firestore";
+import { partyCrystalValue } from "../domain/autoPriority";
+import { bossesOf } from "../domain/bosses";
 import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { comfortSlots, preferredSlots, rankStarts, unanimousCandidates, usualStartSlots } from "../domain/recommend";
 import { SLOT_MS, kstWeekday, slotIdFromMs, slotIdsBetween, slotIndex, slotMs } from "../domain/time";
+import { completedAtOf, findHigherPriorityReadyNeighbor } from "./autoNeighbors";
 import { readBusyConflicts, writeLock } from "./confirm";
 import { loadRecentRaidStarts, type RaidStart } from "./history";
 import { DEFAULT_MIN_LEAD_MINUTES, type AssignMode, type Candidate, type PreferredWindow } from "./model";
@@ -21,7 +24,9 @@ export type EvaluateResult =
   /** 투표 없이 자동 지정: 주기 시작 전이라 1위를 보여 주며 기다린다 */
   | "waiting-auto"
   /** 투표 없이 자동 지정: 1위로 확정했다 */
-  | "auto-confirmed";
+  | "auto-confirmed"
+  /** 투표 없이 자동 지정: 같은 파티원이 있는, 우선순위가 더 높은 자동 지정 파티가 먼저 확정하도록 미뤘다 */
+  | "deferred";
 
 export interface EvaluateOptions {
   /**
@@ -30,6 +35,10 @@ export interface EvaluateOptions {
    * 다시 계산해도 같거나 남는 시각이 없으면 그대로 둔다("unchanged").
    */
   refreshIfUnvoted?: boolean;
+  /**
+   * 자동 지정 파티끼리의 우선순위를 보지 않고 확정한다. 미룬 지 오래된 일정을 정리 작업이 확정할 때 쓴다(autoWake.ts).
+   */
+  ignorePriority?: boolean;
 }
 
 /**
@@ -59,11 +68,16 @@ export async function evaluateSchedule(
   const refresh = options.refreshIfUnvoted === true;
   const first = await attempt(db, partyId, periodId, nowMs, null, refresh);
   if (typeof first === "string") return first;
-  const [pending, usual] = await Promise.all([
+  // 자동 지정 파티는 같은 파티원이 있는 다른 자동 지정 파티와 확정 순서를 맞춘다(domain/autoPriority.ts).
+  const auto = first.auto;
+  const [pending, usual, deferTo] = await Promise.all([
     loadPendingSlots(db, partyId, first.memberUids, first.memberCharacterIds, first.period, nowMs),
     loadRecentRaidStarts(db, partyId, periodId),
+    auto && !options.ignorePriority
+      ? findHigherPriorityReadyNeighbor(db, { partyId, ...auto }, first.memberUids, first.period.startMs, nowMs)
+      : Promise.resolve(null),
   ]);
-  const second = await attempt(db, partyId, periodId, nowMs, { pending, usual }, refresh);
+  const second = await attempt(db, partyId, periodId, nowMs, { pending, usual, deferTo }, refresh);
   return typeof second === "string" ? second : "not-open";
 }
 
@@ -71,12 +85,16 @@ interface NeedsPending {
   memberUids: string[];
   memberCharacterIds: (string | undefined)[];
   period: { startMs: number; totalSlots: number };
+  /** 지금 확정할 자동 지정 파티면 우선순위 비교에 쓸 값 (제출 완료 시각, 결정석 값) */
+  auto: { completedAtMs: number; crystalValue: number } | null;
 }
 
 /** 트랜잭션 밖에서 미리 읽어 두는 참고용 값: 다른 파티의 투표 중 후보, 이 파티의 최근 레이드 시각 */
 interface Context {
   pending: PendingSlots;
   usual: RaidStart[];
+  /** 먼저 확정해야 하는 다른 자동 지정 파티. 있으면 이 파티는 확정을 미룬다 */
+  deferTo: string | null;
 }
 
 function attempt(
@@ -111,7 +129,7 @@ function attempt(
     const unavailableSnap = await tx.get(scheduleRef.collection("unavailable"));
     const unavailable = new Map(unavailableSnap.docs.map((doc) => [doc.id, doc.data()]));
 
-    const clear = { candidates: [], unanimous: [], offeredSlotIds: [], inputsKey: null };
+    const clear = { candidates: [], unanimous: [], offeredSlotIds: [], inputsKey: null, autoDeferredAt: null, autoDeferredFor: null };
     if (!memberUids.every((uid) => unavailable.get(uid)?.submitted === true)) {
       if (candidates.length > 0 || schedule.inputsKey !== null) {
         tx.update(scheduleRef, { ...clear, round: round + 1, updatedAt: Timestamp.now() });
@@ -178,7 +196,11 @@ function attempt(
     const memberCharacterIds = memberUids.map(
       (uid) => (party.members as Record<string, { characterId?: string } | undefined> | undefined)?.[uid]?.characterId,
     );
-    if (context === null) return { memberUids, memberCharacterIds, period };
+    if (context === null) {
+      const completedAtMs = autoAssign && confirmable ? completedAtOf(unavailable, memberUids) : null;
+      const auto = completedAtMs === null ? null : { completedAtMs, crystalValue: partyCrystalValue(bossesOf(party)) };
+      return { memberUids, memberCharacterIds, period, auto };
+    }
     const { pending, usual } = context;
 
     // 다른 파티에서 확정된 시간(busy)은 불가 시간과 같은 판정으로 뺀다.
@@ -274,8 +296,21 @@ function attempt(
       assignMode,
       // 알림 문구를 가르는 데 쓴다
       recommendReason: inputsChanged ? "inputs" : refreshing ? "neighbor" : "next-round",
+      autoDeferredAt: null,
+      autoDeferredFor: null,
       updatedAt: Timestamp.now(),
     };
+
+    if (autoAssign && confirmable && context.deferTo) {
+      // 우선순위가 더 높은 파티가 먼저 확정한다. 그 파티가 확정되면(또는 끝나면) 깨어나 그 시간을 피해 확정한다.
+      // 미룬 시각은 처음 미뤘을 때 그대로 둔다(오래 미뤄지면 정리 작업이 확정한다).
+      tx.update(scheduleRef, {
+        ...update,
+        autoDeferredAt: (schedule.autoDeferredAt as Timestamp | null | undefined) ?? Timestamp.fromMillis(nowMs),
+        autoDeferredFor: context.deferTo,
+      });
+      return "deferred";
+    }
 
     if (autoAssign && confirmable) {
       // 1위부터 차례로, 그 시간 칸에 다른 레이드가 없는 첫 후보로 이 트랜잭션에서 확정한다.

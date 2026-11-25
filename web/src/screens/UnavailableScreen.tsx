@@ -74,8 +74,8 @@ export function UnavailableScreen() {
     setBusy(true);
     setError(null);
     try {
-      await api.setUnavailable(partyId, periodId, uid, slots, true);
-      const others = applyToOthers ? await api.submitToOtherParties(otherParties, schedule, uid, slots) : 0;
+      // 다른 파티까지 한 번에 저장해 같은 순간 제출로 남긴다 (자동 지정 파티끼리의 순서).
+      const others = await api.submitUnavailable(partyId, periodId, uid, slots, applyToOthers ? otherParties : [], schedule);
       toast(others > 0 ? `불가 시간을 제출했습니다 (다른 파티 ${others}곳에도 제출)` : "불가 시간을 제출했습니다");
       back();
     } catch (e) {

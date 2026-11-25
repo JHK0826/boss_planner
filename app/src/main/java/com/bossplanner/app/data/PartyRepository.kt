@@ -228,6 +228,20 @@ class PartyRepository(
             .await()
     }
 
+    /**
+     * 여러 파티의 불가 시간을 한 번의 batch로 제출한다. 모든 문서가 같은 순간(같은 updatedAt)에 생겨,
+     * 투표 없이 자동 지정하는 파티끼리 서버가 "동시에 다 냈다"로 보고 결정석 값으로 순서를 정한다.
+     * @param targets (partyId, periodId) 목록. 하나라도 보안 규칙에 막히면 전부 쓰이지 않는다.
+     */
+    suspend fun submitUnavailableBatch(targets: List<Pair<String, String>>, uid: String, slots: List<String>) {
+        val data = mapOf("slots" to slots.sorted(), "submitted" to true, "updatedAt" to FieldValue.serverTimestamp())
+        val batch = db.batch()
+        for ((partyId, periodId) in targets) {
+            batch.set(scheduleRef(partyId, periodId).collection("unavailable").document(uid), data)
+        }
+        batch.commit().await()
+    }
+
     /** 레이드가 끝난 뒤 결과를 직접 기록한다. 서버가 바로 SETTLED / RETRY / EXPIRED로 넘긴다. */
     suspend fun recordClear(partyId: String, periodId: String, uid: String, cleared: Boolean) {
         scheduleRef(partyId, periodId).collection("clears").document(uid)
@@ -509,6 +523,7 @@ class PartyRepository(
             },
             assignMode = if (doc.getString("assignMode") == "AUTO") "AUTO" else "VOTE",
             confirmedBy = doc.getString("confirmedBy"),
+            autoDeferredAtMs = doc.getTimestamp("autoDeferredAt")?.toMillis(),
         )
     }
 }

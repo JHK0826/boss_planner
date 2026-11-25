@@ -114,6 +114,8 @@ export interface Schedule {
   assignMode: "VOTE" | "AUTO";
   /** 누가 확정했는가: LEADER(파티장) 또는 AUTO(자동 지정). 확정 전이면 null */
   confirmedBy: string | null;
+  /** 투표 없이 자동 지정: 같은 파티원이 있는, 우선순위가 더 높은 다른 자동 지정 파티를 기다리며 확정을 미룬 시각. 아니면 null */
+  autoDeferredAtMs: number | null;
 }
 
 /** 투표 없이 자동 지정하는 일정 (후보가 점수순 순위다) */

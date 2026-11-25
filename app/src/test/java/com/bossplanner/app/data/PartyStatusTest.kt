@@ -151,6 +151,15 @@ class PartyStatusTest {
     }
 
     @Test
+    fun `같은 파티원이 있는 다른 자동 지정 파티를 기다리면 자동 지정 대기로 보여 준다`() {
+        val start = now + 3 * 24 * hour
+        val auto = schedule(round = 2).copy(assignMode = "AUTO", candidates = listOf(Candidate("x", start, start + hour, 5, emptyList())))
+        val both = setOf("a", "b")
+        assertEquals(PartyStatus("자동 지정 중", false), status("a", snapshot(auto, submitted = both)))
+        assertEquals(PartyStatus("자동 지정 대기", false), status("a", snapshot(auto.copy(autoDeferredAtMs = now), submitted = both)))
+    }
+
+    @Test
     fun `확정 뒤에는 레이드가 시작되면 결과 기록`() {
         val raid = now + 2 * hour
         val locked = schedule(state = "LOCKED", confirmedAt = raid)

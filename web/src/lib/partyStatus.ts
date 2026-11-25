@@ -85,7 +85,14 @@ export function partyStatus(uid: string, party: Party, snapshot: PartySnapshot |
         } else if (snapshot.unavailable[uid]?.submitted !== true) todos.push(`${prefix}불가 시간 입력`);
         else if (current.candidates.length === 0) info = `${prefix}다른 파티원 입력 대기 (${submitted}/${members})`;
         // 투표 없이 자동 지정: 투표·확정 할 일이 없다. 미리 연 다음 주면 1위 예정 시간을 보여 준다.
-        else if (isAutoAssigned(current)) info = upcoming ? `자동 지정 예정 ${dateTime(current.candidates[0].startMs)}` : "자동 지정 중";
+        // 같은 파티원이 있는 다른 자동 지정 파티가 먼저 정하는 중이면 대기다.
+        else if (isAutoAssigned(current)) {
+          info = upcoming
+            ? `자동 지정 예정 ${dateTime(current.candidates[0].startMs)}`
+            : current.autoDeferredAtMs !== null
+              ? "자동 지정 대기"
+              : "자동 지정 중";
+        }
         else if (snapshot.votes[uid]?.round !== current.round) todos.push(`${prefix}투표`);
         else if (current.unanimous.length > 0 && upcoming) info = "다음 주 전원 동의 · 목요일부터 확정 가능";
         else if (current.unanimous.length > 0 && isLeader) todos.push("일정 확정");

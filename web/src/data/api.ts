@@ -25,6 +25,7 @@ import {
   setDoc,
   startAt,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
@@ -374,30 +375,65 @@ export async function memberImages(p: Party): Promise<Record<string, string>> {
 }
 
 /**
- * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출하고, 제출한 파티 수를 돌려준다.
- * 주기가 다른 파티(주간 ↔ 월간), 이미 확정된 파티, 그 주기를 용병으로 대체한 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
+ * 이 파티에 불가 시간을 제출하고, otherParties 중 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 시간을 제출한다.
+ * 주기가 다른 파티(주간 ↔ 월간), 이미 확정된 파티, 그 주기를 용병으로 대체한 파티는 건너뛴다.
+ *
+ * 모든 문서를 한 번의 batch로 써서 같은 순간(같은 updatedAt)에 생기게 한다. 그래야 투표 없이 자동 지정하는 파티끼리
+ * 서버가 "동시에 다 냈다"로 보고 결정석 값으로 순서를 정한다. batch가 막히면(그 사이 한 파티가 확정됨 등)
+ * 이 파티를 먼저 쓰고 나머지를 하나씩 쓴다. 이 파티가 실패하면 예외를 던지고, 다른 파티가 실패하면 건너뛴다.
+ * @returns 함께 제출한 다른 파티 수
  */
-export async function submitToOtherParties(
+export async function submitUnavailable(
+  partyId: string,
+  periodId: string,
+  uid: string,
+  slots: string[],
+  otherParties: Party[] = [],
+  period?: { periodStartMs: number; periodEndMs: number },
+): Promise<number> {
+  const targets = period ? await otherTargets(otherParties, period, uid) : [];
+  const data = { slots: [...slots].sort(), submitted: true, updatedAt: serverTimestamp() };
+  try {
+    const batch = writeBatch(db);
+    for (const target of [{ partyId, periodId }, ...targets]) {
+      batch.set(doc(scheduleDoc(target.partyId, target.periodId), "unavailable", uid), data);
+    }
+    await batch.commit();
+    return targets.length;
+  } catch {
+    await setUnavailable(partyId, periodId, uid, slots, true);
+    let submitted = 0;
+    for (const target of targets) {
+      try {
+        await setUnavailable(target.partyId, target.periodId, uid, slots, true);
+        submitted++;
+      } catch {
+        // 이 파티는 건너뛴다. 그 파티 화면에서 따로 제출할 수 있다.
+      }
+    }
+    return submitted;
+  }
+}
+
+/** 같은 주기에 입력을 받고 있고, 내가 용병으로 대체하지 않은 다른 파티의 일정 */
+async function otherTargets(
   otherParties: Party[],
   period: { periodStartMs: number; periodEndMs: number },
   uid: string,
-  slots: string[],
-): Promise<number> {
-  let submitted = 0;
-  for (const other of otherParties) {
-    try {
-      const schedule = await latestScheduleOnce(other.id);
-      if (!schedule) continue;
-      const samePeriod = schedule.periodStartMs === period.periodStartMs && schedule.periodEndMs === period.periodEndMs;
-      if (acceptsInput(schedule) && samePeriod && !isReplaced(schedule, uid)) {
-        await setUnavailable(other.id, schedule.id, uid, slots, true);
-        submitted++;
+): Promise<{ partyId: string; periodId: string }[]> {
+  const found = await Promise.all(
+    otherParties.map(async (other) => {
+      try {
+        const schedule = await latestScheduleOnce(other.id);
+        if (!schedule) return null;
+        const samePeriod = schedule.periodStartMs === period.periodStartMs && schedule.periodEndMs === period.periodEndMs;
+        return acceptsInput(schedule) && samePeriod && !isReplaced(schedule, uid) ? { partyId: other.id, periodId: schedule.id } : null;
+      } catch {
+        return null;
       }
-    } catch {
-      // 이 파티는 건너뛴다. 그 파티 화면에서 따로 제출할 수 있다.
-    }
-  }
-  return submitted;
+    }),
+  );
+  return found.filter((target): target is { partyId: string; periodId: string } => target !== null);
 }
 
 // ---------- 정산·채팅 ----------

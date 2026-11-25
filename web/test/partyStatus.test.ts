@@ -51,6 +51,7 @@ function schedule(o: Partial<Schedule> & { candidateCount?: number; confirmedAt?
     settlement: null,
     assignMode: "VOTE",
     confirmedBy: null,
+    autoDeferredAtMs: null,
     ...rest,
   };
 }
@@ -195,6 +196,14 @@ describe("partyStatus", () => {
     expect(status("a", snapshot([upcoming], { submitted: ["a", "b"] }))).toMatchObject(s(`자동 지정 예정 ${dateTime(plannedStart)}`, false));
     expect(status("b", snapshot([upcoming], { submitted: ["a"] }))).toMatchObject(s("다음 주 불가 시간 입력", true));
     expect(tabTodos(status("a", snapshot([upcoming], { submitted: ["a", "b"] })))).toEqual({ vote: false, settlement: false });
+  });
+
+  it("같은 파티원이 있는 다른 자동 지정 파티를 기다리면 자동 지정 대기로 보여 준다", () => {
+    const candidates = [{ slotId: "x", startMs: now + 3 * 24 * hour, endMs: now + 3 * 24 * hour + hour, score: 5, reasons: [] }];
+    const auto = schedule({ assignMode: "AUTO", round: 2, candidates });
+    const both = { submitted: ["a", "b"] };
+    expect(status("a", snapshot([auto], both))).toMatchObject(s("자동 지정 중", false));
+    expect(status("a", snapshot([{ ...auto, autoDeferredAtMs: now }], both))).toMatchObject(s("자동 지정 대기", false));
   });
 
   it("이번 주 일정과 미리 연 다음 주 일정을 나눈다", () => {
