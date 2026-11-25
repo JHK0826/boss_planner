@@ -50,6 +50,7 @@ BOSSES = [
     ("9458.webp", "baldrix", (0, 78, 422)),
     ("9459.webp", "jupiter", (20, 62, 320)),
     ("9433.png", "bellona", (220, 40, 380)),
+    ("magnus.png", "magnus", (70, 66, 330)),
 ]
 
 

@@ -5,10 +5,11 @@ import com.bossplanner.app.R
 
 /**
  * 내 캐릭터 탭 보스 칩에 쓰는 보스 이미지. 이미지는 scripts/boss_images.py로 원본 카드를 잘라 만든다.
- * 웹 lib/bossImages.ts와 같은 표다. 매그너스는 아직 이미지가 없어 이름 글씨로 보여 준다.
+ * 웹 lib/bossImages.ts와 같은 표다. 표에 없는 보스는 이름 글씨로 보여 준다.
  */
 private val BOSS_IMAGES: Map<String, Int> = mapOf(
     "자쿰" to R.drawable.boss_zakum,
+    "매그너스" to R.drawable.boss_magnus,
     "파풀라투스" to R.drawable.boss_papulatus,
     "피에르" to R.drawable.boss_pierre,
     "반반" to R.drawable.boss_vonbon,

@@ -1,7 +1,7 @@
 // 내 캐릭터 탭 보스 칩에 쓰는 보스 이미지. 이미지는 scripts/boss_images.py로 원본 카드를 잘라 만든다.
 // Android ui/BossImages.kt와 같은 표다.
 
-/** 보스 이름 → 이미지 파일 이름(슬러그). 매그너스는 아직 이미지가 없다. */
+/** 보스 이름 → 이미지 파일 이름(슬러그). 표에 없거나 파일이 없는 보스는 이름 글씨로 보여 준다. */
 export const BOSS_IMAGE_SLUGS: Record<string, string> = {
   자쿰: "zakum",
   매그너스: "magnus",
