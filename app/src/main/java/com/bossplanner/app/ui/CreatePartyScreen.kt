@@ -225,6 +225,7 @@ fun CreatePartyScreen(
                             character,
                             settings.preferredWindow,
                             settings.minLeadMinutes,
+                            settings.autoAssign,
                         )
                         showMessage.show("파티를 만들었습니다. 초대 코드를 파티원에게 보내 주세요")
                         onCreated(created)

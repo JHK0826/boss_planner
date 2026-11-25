@@ -65,6 +65,7 @@ import androidx.compose.material3.Surface
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.bossplanner.app.data.Bosses
+import com.bossplanner.app.data.Candidate
 import com.bossplanner.app.data.Confirmed
 import com.bossplanner.app.data.MAX_PARTY_SIZE
 import com.bossplanner.app.data.Mercenary
@@ -98,6 +99,7 @@ private sealed interface Confirm {
     data class Lock(val index: Int, val label: String) : Confirm
     data class Record(val cleared: Boolean) : Confirm
     data object RequestChange : Confirm
+    data class SwitchCandidate(val index: Int, val label: String) : Confirm
     data object MercenaryReplace : Confirm
     data object MercenaryAdd : Confirm
     data class MercenaryRemove(val mercenary: Mercenary) : Confirm
@@ -249,7 +251,7 @@ fun PartyScreen(
                     busy = busy,
                     onSave = { settings ->
                         run("추천 설정을 저장했습니다") {
-                            parties.updatePartyPreferences(partyId, settings.preferredWindow, settings.minLeadMinutes)
+                            parties.updatePartyPreferences(partyId, settings.preferredWindow, settings.minLeadMinutes, settings.autoAssign)
                         }
                     },
                     onAsk = { confirm = it },
@@ -458,6 +460,18 @@ fun PartyScreen(
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
         )
+        is Confirm.SwitchCandidate -> AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("다른 순위로 바꾸기") },
+            text = { Text("${current.label}로 바꿀까요? 파티원에게 알림이 갑니다. 파티원이 속한 다른 파티 일정과 겹치면 바뀌지 않습니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    run("일정을 바꿨습니다") { parties.switchAssignedCandidate(partyId, schedule!!.id, current.index) }
+                }) { Text("바꾸기") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+        )
         is Confirm.Delegate -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("파티장 위임") },
@@ -614,7 +628,11 @@ private fun ScheduleTab(
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                "이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간 입력과 투표를 먼저 하고, 확정은 목요일 00:00부터 할 수 있습니다.",
+                if (party.autoAssign) {
+                    "이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간을 먼저 내 두면 목요일 00:00에 투표 없이 점수 1위 시간으로 확정합니다."
+                } else {
+                    "이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간 입력과 투표를 먼저 하고, 확정은 목요일 00:00부터 할 수 있습니다."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -726,7 +744,7 @@ private fun PartySettingsTab(
     onAsk: (Confirm) -> Unit,
 ) {
     val isLeader = party.leaderUid == uid
-    val saved = RecommendSettings(party.preferredWindow, party.minLeadMinutes)
+    val saved = RecommendSettings(party.preferredWindow, party.minLeadMinutes, party.autoAssign)
     // 다른 기기에서 바뀌거나 저장되면 편집 중인 값도 맞춘다.
     var draft by remember(saved) { mutableStateOf(saved) }
     val others = party.memberUids.filter { it != uid }.mapNotNull { party.members[it] }
@@ -738,14 +756,18 @@ private fun PartySettingsTab(
             RecommendSettingsEditor(draft, enabled = !busy) { draft = it }
             if (schedule?.acceptsInput == true && schedule.candidates.isNotEmpty()) {
                 Text(
-                    "지금 투표 중입니다. 설정을 바꾸면 추천 시간을 다시 계산하고 투표도 다시 합니다.",
+                    if (draft.autoAssign && !party.autoAssign) {
+                        "지금 투표 중입니다. 자동 지정을 켜면 투표 없이 점수 1위 시간으로 바로 확정합니다(미리 연 다음 주는 목요일 00:00)."
+                    } else {
+                        "지금 조율 중입니다. 설정을 바꾸면 추천 시간을 다시 계산합니다."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
             }
             Button(enabled = !busy && draft != saved, modifier = Modifier.fillMaxWidth(), onClick = { onSave(draft) }) { Text("저장") }
         } else {
-            Text(recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes), style = MaterialTheme.typography.bodyMedium)
+            Text(recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes, party.autoAssign), style = MaterialTheme.typography.bodyMedium)
             Text("추천 설정은 파티장만 바꿀 수 있습니다.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
@@ -964,11 +986,14 @@ private fun ScheduleSection(
                     Text(
                         when {
                             replaced -> "이번 주기는 용병으로 대체했습니다. 나머지 파티원이 조율합니다. 파티 탭에서 대체를 취소할 수 있습니다."
-                            myUnavailable?.submitted == true -> "전원이 제출하면 추천 시간이 나옵니다."
-                            else -> "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."
+                            myUnavailable?.submitted != true -> "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."
+                            party.autoAssign -> "전원이 제출하면 투표 없이 점수가 가장 높은 시간으로 자동으로 정해집니다."
+                            else -> "전원이 제출하면 추천 시간이 나옵니다."
                         },
                         style = MaterialTheme.typography.bodySmall,
                     )
+                } else if (schedule.isAutoAssigned) {
+                    AutoPlan(schedule)
                 } else {
                     // 참여 파티원의 투표만 센다.
                     CandidateVoting(
@@ -976,6 +1001,59 @@ private fun ScheduleSection(
                         isLeader, busy, onVote, onAsk,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** 순위 후보 한 줄: "1위 · 11/21 (토) 21:00 ~ 22:00" + 이유 */
+@Composable
+private fun RankedCandidate(rank: Int, candidate: Candidate, action: (@Composable () -> Unit)? = null) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "${rank}위 · ${TimeSlots.range(candidate.startMs, candidate.endMs)}",
+                style = if (rank == 1) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+            )
+            val why = reasonText(candidate.reasons)
+            if (why.isNotEmpty()) {
+                Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        action?.invoke()
+    }
+}
+
+/** 투표 없이 자동 지정: 미리 연 다음 주라 아직 확정하지 않고 예정만 보여 준다 (웹 VoteTab.tsx의 AutoPlan과 같음) */
+@Composable
+private fun AutoPlan(schedule: Schedule) {
+    val upcoming = schedule.periodStartMs > System.currentTimeMillis()
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                if (upcoming) "자동 지정 예정 · ${TimeSlots.dateTime(schedule.periodStartMs)}에 확정" else "자동 지정 중",
+                style = MaterialTheme.typography.labelMedium,
+            )
+            schedule.candidates.forEachIndexed { index, candidate -> RankedCandidate(index + 1, candidate) }
+            Text("투표 없이 점수가 가장 높은 시간으로 정합니다. 불가 시간을 고치면 다시 계산합니다.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/** 자동으로 정한 일정을 파티장이 다른 순위로 바꾸는 목록 (변경 요청 마감 = 레이드 4시간 전까지) */
+@Composable
+private fun SwitchCandidates(schedule: Schedule, confirmed: Confirmed, now: Long, busy: Boolean, onAsk: (Confirm) -> Unit) {
+    val others = schedule.candidates.withIndex().filter { it.value.startMs != confirmed.startMs }
+    if (others.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("다른 순위로 바꾸기 (레이드 4시간 전까지)", style = MaterialTheme.typography.labelMedium)
+        others.forEach { (index, candidate) ->
+            val tooSoon = now >= TimeSlots.changeRequestDeadline(candidate.startMs)
+            RankedCandidate(index + 1, candidate) {
+                OutlinedButton(
+                    enabled = !busy && !tooSoon,
+                    onClick = { onAsk(Confirm.SwitchCandidate(index, TimeSlots.range(candidate.startMs, candidate.endMs))) },
+                ) { Text(if (tooSoon) "4시간 안" else "이 시간으로") }
             }
         }
     }
@@ -996,8 +1074,19 @@ private fun LockedSchedule(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("확정된 시간", style = MaterialTheme.typography.labelMedium)
+            Text(
+                when {
+                    !schedule.isAutoAssigned -> "확정된 시간"
+                    schedule.confirmedBy == "AUTO" -> "투표 없이 자동으로 정한 시간"
+                    else -> "파티장이 순위에서 고른 시간"
+                },
+                style = MaterialTheme.typography.labelMedium,
+            )
             Text(TimeSlots.range(confirmed.startMs, confirmed.endMs), style = MaterialTheme.typography.titleLarge)
+            val why = schedule.candidates.firstOrNull { it.startMs == confirmed.startMs }?.let { reasonText(it.reasons) }.orEmpty()
+            if (schedule.isAutoAssigned && why.isNotEmpty()) {
+                Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (schedule.mercenaries.isNotEmpty()) {
                 Text(
                     "참여: 파티원 ${confirmed.memberUids.size}명 + 용병 ${schedule.mercenaries.size}명",
@@ -1005,6 +1094,10 @@ private fun LockedSchedule(
                 )
             }
         }
+    }
+
+    if (schedule.isAutoAssigned && isLeader && schedule.state == "LOCKED" && now < TimeSlots.changeRequestDeadline(confirmed.startMs)) {
+        SwitchCandidates(schedule, confirmed, now, busy, onAsk)
     }
 
     if (schedule.isReplaced(uid)) {
@@ -1134,6 +1227,10 @@ private fun CandidateVoting(
                         style = MaterialTheme.typography.bodySmall,
                         color = if (unanimous) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val why = reasonText(candidate.reasons)
+                    if (why.isNotEmpty()) {
+                        Text(why, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 if (unanimous && isLeader && !early) {
                     Button(enabled = !busy, onClick = { onAsk(Confirm.Lock(index, label)) }) { Text("확정") }
