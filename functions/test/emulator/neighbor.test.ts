@@ -25,9 +25,12 @@ async function addUser(uid: string) {
   });
 }
 
+/** ymd 날짜의 fromHour ~ toHour 칸 ID (21.5 = 21:30) */
 function day(ymd: string, fromHour = 0, toHour = 24): string[] {
   const slots: string[] = [];
-  for (let h = fromHour; h < toHour; h++) slots.push(`${ymd}-${String(h).padStart(2, "0")}00`, `${ymd}-${String(h).padStart(2, "0")}30`);
+  for (let row = fromHour * 2; row < toHour * 2; row++) {
+    slots.push(`${ymd}-${String(Math.floor(row / 2)).padStart(2, "0")}${row % 2 === 0 ? "00" : "30"}`);
+  }
   return slots;
 }
 /** 이번 주에서 주어진 시간대만 빼고 전부 불가 */
@@ -81,7 +84,7 @@ beforeEach(async () => {
   await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, {
     method: "DELETE",
   });
-  await Promise.all(["a", "b", "c"].map(addUser));
+  await Promise.all(["a", "b", "c", "d"].map(addUser));
 });
 
 describe("같은 파티원이 있는 다른 파티와 이어 돌기", () => {
@@ -145,5 +148,59 @@ describe("같은 파티원이 있는 다른 파티와 이어 돌기", () => {
 
     expect(await data(B)).toMatchObject({ state: "OPEN" });
     expect(await slotIds(B)).toEqual([`${SAT}-2000`]);
+  });
+});
+
+describe("이어 돌기: 같은 캐릭터 > 같은 사람", () => {
+  /** 리더와 파티원 한 명으로 파티를 만들고 이번 주기를 시작한다 */
+  async function party(leader: string, leaderChar: string, member: string, boss: string, durationMinutes: number) {
+    const created = await createParty(db, leader, { name: `${boss}팟`, bosses: [{ name: boss, difficulty: "HARD" }], durationMinutes, characterId: leaderChar }, THU);
+    await joinParty(db, member, { inviteCode: created.inviteCode, characterId: `char-${member}` }, THU);
+    await startSchedule(db, leader, { partyId: created.partyId }, THU);
+    return created.partyId;
+  }
+  /** 전원이 같은 시간대만 가능하게 내고, 하나뿐인 후보로 확정한다 */
+  async function confirmAt(partyId: string, uids: string[], free: [number, number]) {
+    const slots = weekExcept([SAT, ...free]);
+    await submitAll(partyId, Object.fromEntries(uids.map((uid) => [uid, slots])));
+    for (const uid of uids) await vote(partyId, uid, [0]);
+    await evaluateSchedule(db, partyId, PERIOD, THU);
+    await confirmSchedule(db, uids[0], { partyId, periodId: PERIOD, candidateIndex: 0 }, THU);
+  }
+
+  /**
+   * a는 캐릭터가 둘이다. 토 18:00~19:00에 char-a로, 토 21:30~22:30에 char-a2로 다른 파티 레이드가 확정되어 있다.
+   * 그 사이 19:00~21:30만 되는 90분 파티는 19:00(앞 레이드 바로 뒤)과 20:00(뒤 레이드 바로 앞) 중 하나만 고를 수 있다.
+   */
+  async function setup() {
+    await db.doc("secrets/a").set(
+      { characters: { "char-a2": { ocid: "ocid-a2", name: "캐릭-a2", world: "스카니아", job: "아크메이지(불,독)", level: 275 } } },
+      { merge: true },
+    );
+    const early = await party("a", "char-a", "b", "스우", 60);
+    await confirmAt(early, ["a", "b"], [18, 19]);
+    const late = await party("a", "char-a2", "c", "데미안", 60);
+    await confirmAt(late, ["a", "c"], [21.5, 22.5]);
+  }
+
+  it("확정할 때 busy에 그 파티의 캐릭터를 남긴다", async () => {
+    await setup();
+    expect((await db.doc(`users/a/busy/${SAT}-1800`).get()).get("characterId")).toBe("char-a");
+    expect((await db.doc(`users/a/busy/${SAT}-2130`).get()).get("characterId")).toBe("char-a2");
+    expect((await db.doc(`users/b/busy/${SAT}-1800`).get()).get("characterId")).toBe("char-b");
+  });
+
+  it("같은 캐릭터로 확정된 레이드 쪽에 이어 붙인다", async () => {
+    await setup();
+    const withA = await party("a", "char-a", "d", "루시드", 90);
+    await submitAll(withA, { a: weekExcept([SAT, 19, 21.5]), d: weekExcept([SAT, 19, 21.5]) });
+    expect(await slotIds(withA)).toEqual([`${SAT}-1900`]);
+  });
+
+  it("다른 캐릭터면 그 캐릭터로 확정된 레이드 쪽에 이어 붙인다", async () => {
+    await setup();
+    const withA2 = await party("a", "char-a2", "d", "루시드", 90);
+    await submitAll(withA2, { a: weekExcept([SAT, 19, 21.5]), d: weekExcept([SAT, 19, 21.5]) });
+    expect(await slotIds(withA2)).toEqual([`${SAT}-2000`]);
   });
 });

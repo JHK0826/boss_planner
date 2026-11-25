@@ -48,13 +48,14 @@ export async function evaluateSchedule(
   const refresh = options.refreshIfUnvoted === true;
   const first = await attempt(db, partyId, periodId, nowMs, null, refresh);
   if (typeof first === "string") return first;
-  const pending = await loadPendingSlots(db, partyId, first.memberUids, first.period, nowMs);
+  const pending = await loadPendingSlots(db, partyId, first.memberUids, first.memberCharacterIds, first.period, nowMs);
   const second = await attempt(db, partyId, periodId, nowMs, pending, refresh);
   return typeof second === "string" ? second : "not-open";
 }
 
 interface NeedsPending {
   memberUids: string[];
+  memberCharacterIds: (string | undefined)[];
   period: { startMs: number; totalSlots: number };
 }
 
@@ -140,7 +141,11 @@ function attempt(
     }
 
     // 여기부터는 후보를 새로 계산한다.
-    if (pending === null) return { memberUids, period };
+    // 이 파티에 넣은 파티원별 캐릭터. 이어 돌기에서 같은 캐릭터를 더 우선한다.
+    const memberCharacterIds = memberUids.map(
+      (uid) => (party.members as Record<string, { characterId?: string } | undefined> | undefined)?.[uid]?.characterId,
+    );
+    if (pending === null) return { memberUids, memberCharacterIds, period };
 
     // 다른 파티에서 확정된 시간(busy)은 불가 시간과 같은 판정으로 뺀다.
     const periodEndMs = (schedule.periodEnd as Timestamp).toMillis();
@@ -157,6 +162,14 @@ function attempt(
     const toIndexes = (slotIds: string[]) =>
       slotIds.map((id) => slotIndex(period, id)).filter((index): index is number => index !== null);
     const busy = busySnaps.map((snap) => toIndexes(snap.docs.map((doc) => doc.id)));
+    // busy 중 이 파티와 같은 캐릭터로 잡힌 레이드 (예전 busy에는 characterId가 없어 다른 캐릭터로 본다)
+    const busySameCharacter = busySnaps.map((snap, i) =>
+      toIndexes(
+        snap.docs
+          .filter((doc) => !!memberCharacterIds[i] && doc.get("characterId") === memberCharacterIds[i])
+          .map((doc) => doc.id),
+      ),
+    );
     const blocked = memberUids.map((uid, i) => [...toIndexes(slotsOf(uid)), ...busy[i]]);
 
     const recommend = (leadMinutes: number) =>
@@ -165,8 +178,10 @@ function attempt(
         durationSlots,
         blocked,
         busy,
+        busySameCharacter,
         pending: pending.all,
         pendingByMember: pending.byMember,
+        pendingSameCharacter: pending.sameCharacterByMember,
         preferred: preferredWindow
           ? preferredSlots(preferredWindow, period.totalSlots, kstWeekday(period.startMs))
           : undefined,

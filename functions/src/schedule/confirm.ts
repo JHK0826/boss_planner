@@ -117,7 +117,9 @@ export async function confirmSchedule(
       start: candidate.start,
       end: candidate.end,
     };
-    for (const ref of busyRefs) tx.create(ref, busy);
+    // 이어 돌기 추천에서 같은 캐릭터인지 보려고, 그 파티에 넣은 캐릭터를 함께 남긴다.
+    const characterOf = (member: string): string | null => party.members?.[member]?.characterId ?? null;
+    for (const ref of busyRefs) tx.create(ref, { ...busy, characterId: characterOf(ref.parent.parent!.id) });
     const confirmed: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids };
     tx.update(scheduleRef, {
       state: "LOCKED",

@@ -1,13 +1,13 @@
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
-import { startOfKstDay } from "../domain/time";
+import { changeRequestDeadline } from "../domain/time";
 import { releaseBusy, requireString } from "./confirm";
 import { resetFields, type Confirmed } from "./model";
 
 type Data = Record<string, unknown> | undefined | null;
 
 /**
- * 확정된 일정의 변경을 요청한다. 레이드 전날 23:59(KST)까지만 받는다.
+ * 확정된 일정의 변경을 요청한다. 레이드 시작 4시간 전까지만 받는다.
  * 마감은 기기 시계가 아니라 서버 시각(nowMs)으로 검사한다.
  */
 export async function requestChange(db: Firestore, uid: string, data: Data, nowMs: number): Promise<void> {
@@ -29,8 +29,8 @@ export async function requestChange(db: Firestore, uid: string, data: Data, nowM
     if (schedule.changeRequest?.status === "PENDING") {
       throw new HttpsError("already-exists", "이미 처리 대기 중인 변경 요청이 있습니다.", { reason: "already-requested" });
     }
-    if (nowMs >= startOfKstDay((schedule.confirmed as Confirmed).start.toMillis())) {
-      throw new HttpsError("failed-precondition", "변경 요청은 레이드 전날 23:59까지만 할 수 있습니다.", {
+    if (nowMs >= changeRequestDeadline((schedule.confirmed as Confirmed).start.toMillis())) {
+      throw new HttpsError("failed-precondition", "변경 요청은 레이드 시작 4시간 전까지만 할 수 있습니다.", {
         reason: "deadline-passed",
       });
     }

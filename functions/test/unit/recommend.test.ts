@@ -120,15 +120,38 @@ describe("recommendStarts: 점수", () => {
     const free = onlyFree(WEEK, [at(0, 18), at(0, 24)]);
     const input = { totalSlots: WEEK, durationSlots: 2, earliestSlot: 0, limit: 2, pending: theirs };
 
-    // 한 명: 레이드 앞뒤(18:00, 20:00, 각 15점)가 투표 중 후보 앞뒤(21:00, 23:00, 각 10점)보다 먼저
+    // 한 명: 레이드 앞뒤(18:00, 20:00, 각 15점)가 투표 중 후보 앞뒤(21:00, 23:00, 각 8점)보다 먼저
     expect(recommendStarts({ ...input, blocked: [[...free, ...raid]], busy: [raid], pendingByMember: [theirs] })).toEqual([
       at(0, 18),
       at(0, 20),
     ]);
-    // 두 명이 모두 그 투표 중 후보의 파티에 있으면 21:00, 23:00이 10×2 = 20점으로 레이드 앞뒤(15점)보다 먼저
+    // 두 명이 모두 그 투표 중 후보의 파티에 있으면 21:00, 23:00이 8×2 = 16점으로 레이드 앞뒤(15점)보다 먼저
     expect(
       recommendStarts({ ...input, blocked: [[...free, ...raid], free], busy: [raid, []], pendingByMember: [theirs, theirs] }),
     ).toEqual([at(0, 21), at(0, 23)]);
+  });
+
+  it("이어 돌기는 같은 캐릭터 > 같은 사람(다른 캐릭터) 순이고, 확정 레이드가 투표 중 후보보다 먼저다", () => {
+    // 0일째 19:00~21:30만 가능, 소요 90분(3칸). 19:00 시작(왼쪽 레이드 바로 뒤)과 20:00 시작(오른쪽 레이드 바로 앞)은
+    // 서로 겹쳐 하나만 고를 수 있고, 둘 다 정각이다.
+    const left = range(at(0, 18), at(0, 19));
+    const right = range(at(0, 21) + 1, at(0, 22) + 1);
+    const blocked = [onlyFree(WEEK, [at(0, 19), at(0, 21) + 1])];
+    const input = { totalSlots: WEEK, durationSlots: 3, blocked, earliestSlot: 0 };
+    const leftStart = [at(0, 19)];
+    const rightStart = [at(0, 20)];
+
+    // 확정 레이드 둘: 같은 캐릭터(20) 쪽이 다른 캐릭터(15) 쪽보다 먼저
+    expect(recommendStarts({ ...input, busy: [[...left, ...right]], busySameCharacter: [left] })).toEqual(leftStart);
+    expect(recommendStarts({ ...input, busy: [[...left, ...right]], busySameCharacter: [right] })).toEqual(rightStart);
+    // 다른 캐릭터의 확정 레이드(15)가 같은 캐릭터의 투표 중 후보(12)보다 먼저
+    expect(
+      recommendStarts({ ...input, busy: [right], pending: left, pendingByMember: [left], pendingSameCharacter: [left] }),
+    ).toEqual(rightStart);
+    // 투표 중 후보 둘: 같은 캐릭터(12) 쪽이 다른 캐릭터(8) 쪽보다 먼저
+    expect(
+      recommendStarts({ ...input, pending: [...left, ...right], pendingByMember: [[...left, ...right]], pendingSameCharacter: [right] }),
+    ).toEqual(rightStart);
   });
 
   it("다른 파티가 투표 중인 후보와 겹치는 시각은 뒤로 미룬다", () => {

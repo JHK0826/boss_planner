@@ -853,15 +853,15 @@ private fun LockedSchedule(
     if (request?.status == "REJECTED" && request.requestedBy == uid) {
         Text("변경 요청이 거절되었습니다.", style = MaterialTheme.typography.bodySmall)
     }
-    // 변경 요청은 레이드 전날 23:59까지
-    val deadline = TimeSlots.startOfDay(confirmed.startMs)
+    // 변경 요청은 레이드 시작 4시간 전까지
+    val deadline = TimeSlots.changeRequestDeadline(confirmed.startMs)
     if (now < deadline) {
         OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { onAsk(Confirm.RequestChange) }) {
             Text("일정 변경 요청")
         }
-        Text("변경 요청 마감: ${TimeSlots.dateTime(deadline - 60_000)}", style = MaterialTheme.typography.bodySmall)
+        Text("변경 요청 마감: ${TimeSlots.dateTime(deadline)} (레이드 시작 4시간 전)", style = MaterialTheme.typography.bodySmall)
     } else {
-        Text("변경 요청 기간(레이드 전날 23:59까지)이 지났습니다.", style = MaterialTheme.typography.bodySmall)
+        Text("변경 요청 기간(레이드 시작 4시간 전까지)이 지났습니다.", style = MaterialTheme.typography.bodySmall)
     }
 }
 

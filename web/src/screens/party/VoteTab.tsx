@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import * as api from "../../data/api";
 import { acceptsInput, type Confirmed, type Party, type Schedule, type Vote } from "../../lib/model";
 import { currentPeriodSchedule, isUpcoming } from "../../lib/partyStatus";
-import { dateTime, dayLabel, dayWithWeekday, range, startOfDay, time, weekdayLabel } from "../../lib/time";
+import { changeRequestDeadline, dateTime, dayLabel, dayWithWeekday, range, time, weekdayLabel } from "../../lib/time";
 import { Loading } from "../../ui/common";
 import { type Confirm, memberLabelOf, useParty } from "./context";
 
@@ -272,8 +272,8 @@ function LockedSchedule({
       </>
     );
   } else {
-    // 변경 요청은 레이드 전날 23:59까지
-    const deadline = startOfDay(confirmed.startMs);
+    // 변경 요청은 레이드 시작 4시간 전까지
+    const deadline = changeRequestDeadline(confirmed.startMs);
     body = (
       <>
         {request?.status === "REJECTED" && request.requestedBy === uid && (
@@ -287,12 +287,12 @@ function LockedSchedule({
               일정 변경 요청
             </button>
             <p className="small muted" style={{ margin: 0 }}>
-              변경 요청 마감: {dateTime(deadline - 60_000)}
+              변경 요청 마감: {dateTime(deadline)} (레이드 시작 4시간 전)
             </p>
           </>
         ) : (
           <p className="small muted" style={{ margin: 0 }}>
-            변경 요청 기간(레이드 전날 23:59까지)이 지났습니다.
+            변경 요청 기간(레이드 시작 4시간 전까지)이 지났습니다.
           </p>
         )}
       </>

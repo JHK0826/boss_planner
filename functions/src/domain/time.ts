@@ -104,6 +104,14 @@ export function kstWeekday(ms: number): number {
   return ((kstDate(ms).getUTCDay() + 6) % 7) + 1;
 }
 
+/** 확정된 일정의 변경 요청은 레이드 시작 이 시간 전까지만 받는다 */
+export const CHANGE_REQUEST_LEAD_MS = 4 * 60 * 60 * 1000;
+
+/** 변경 요청 마감 시각: 레이드 시작 4시간 전 (이 시각부터는 받지 않음) */
+export function changeRequestDeadline(raidStartMs: number): number {
+  return raidStartMs - CHANGE_REQUEST_LEAD_MS;
+}
+
 /** ms가 속한 KST 날짜의 00:00 */
 export function startOfKstDay(ms: number): number {
   const d = kstDate(ms);

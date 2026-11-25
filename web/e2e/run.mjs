@@ -266,7 +266,7 @@ try {
   step("파티 탭에서 파티원의 진행 상태와 불가 시간표를 본다");
 
   await tab(a, "투표");
-  // 변경 요청은 레이드 전날까지라, 가장 늦은 후보(다른 날)를 확정한다.
+  // 변경 요청은 레이드 시작 4시간 전까지라, 넉넉하게 가장 늦은 후보를 확정한다.
   await a.getByRole("button", { name: "확정", exact: true }).last().click();
   await a.getByRole("dialog", { name: "일정 확정" }).getByRole("button", { name: "확정" }).click();
   await a.getByText("일정을 확정했습니다").waitFor();

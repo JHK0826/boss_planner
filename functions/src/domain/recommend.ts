@@ -6,9 +6,11 @@
  *    이미 지난 시간과 최소 여유 시간 안쪽은 쓰지 않는다(earliestSlot).
  * 2. 시작 시각마다 점수를 매긴다. 높을수록 먼저 추천한다.
  *      + 파티 선호 시간대 안에 온전히 들어감
- *      + 파티원의 다른 확정 레이드 바로 앞이나 뒤 (한 번 접속에 몰아서 돌 수 있음)
- *      + 파티원이 겹치는 다른 파티가 투표 중인 후보 바로 앞이나 뒤 (확정 레이드보다 조금 덜).
- *        다른 파티 후보는 보통 요일마다 하나씩이라, 어느 후보로 확정되든 이어서 돌 시각이 남는다.
+ *      + 파티원의 다른 레이드 바로 앞이나 뒤 (한 번 접속에 몰아서 돌 수 있음). 파티원마다 가장 높은 하나만 준다.
+ *          확정 레이드: 같은 캐릭터 20 > 다른 캐릭터 15
+ *          투표 중인 다른 파티 후보: 같은 캐릭터 12 > 다른 캐릭터 8
+ *        같은 캐릭터면 캐릭터를 바꾸지 않고 이어 돌 수 있다. 다른 파티 후보는 보통 요일마다 하나씩이라,
+ *        어느 후보로 확정되든 이어서 돌 시각이 남는다. 다른 사람의 레이드는 상관없다.
  *      − 파티원이 겹치는 다른 파티가 투표 중인 후보와 겹침 (나중에 한쪽이 거절당해 다시 투표하게 됨)
  *      + 정각에 시작
  *      + 주기 앞쪽 날짜 (미클리어 때 다시 잡을 여유가 남음)
@@ -20,8 +22,10 @@ export const SLOTS_PER_DAY = 48;
 export const MAX_CANDIDATES = 6;
 
 const SCORE_PREFERRED = 100;
+const SCORE_ADJACENT_SAME_CHARACTER = 20;
 const SCORE_ADJACENT_PER_MEMBER = 15;
-const SCORE_PENDING_ADJACENT_PER_MEMBER = 10;
+const SCORE_PENDING_ADJACENT_SAME_CHARACTER = 12;
+const SCORE_PENDING_ADJACENT_PER_MEMBER = 8;
 const SCORE_ADJACENT_MAX = 60;
 const SCORE_PENDING_OVERLAP = -60;
 const SCORE_ON_THE_HOUR = 5;
@@ -43,6 +47,10 @@ export interface RecommendInput {
   pending?: Iterable<number>;
   /** 파티원별 다른 파티의 투표 중 후보 칸 (busy와 같은 파티원 순서). 그 앞뒤에 붙는 시각을 조금 우선한다 */
   pendingByMember?: Iterable<number>[];
+  /** busy 중 그 파티원이 이 파티와 같은 캐릭터로 잡은 칸 (busy와 같은 순서). 그 앞뒤를 더 우선한다 */
+  busySameCharacter?: Iterable<number>[];
+  /** pendingByMember 중 같은 캐릭터로 들어간 파티의 칸 (busy와 같은 순서) */
+  pendingSameCharacter?: Iterable<number>[];
   /** 파티 선호 시간대에 속하는 칸 */
   preferred?: Iterable<number>;
   limit?: number;
@@ -63,7 +71,9 @@ export function recommendStarts(input: RecommendInput): number[] {
   const busy = (input.busy ?? []).map((member) => new Set(member));
   const pending = new Set(input.pending ?? []);
   const pendingByMember = (input.pendingByMember ?? []).map((member) => new Set(member));
-  const memberCount = Math.max(busy.length, pendingByMember.length);
+  const busySameCharacter = (input.busySameCharacter ?? []).map((member) => new Set(member));
+  const pendingSameCharacter = (input.pendingSameCharacter ?? []).map((member) => new Set(member));
+  const memberCount = Math.max(busy.length, pendingByMember.length, busySameCharacter.length, pendingSameCharacter.length);
   const preferred = input.preferred ? new Set(input.preferred) : null;
 
   const score = (start: number): number => {
@@ -73,10 +83,12 @@ export function recommendStarts(input: RecommendInput): number[] {
     if (preferred && slots.every((slot) => preferred.has(slot))) total += SCORE_PREFERRED;
     if (slots.some((slot) => pending.has(slot))) total += SCORE_PENDING_OVERLAP;
     const touches = (slots: Set<number> | undefined) => !!slots && (slots.has(start - 1) || slots.has(start + durationSlots));
-    // 파티원마다 확정 레이드 앞뒤면 15, 아니고 투표 중 후보 앞뒤면 10
+    // 파티원마다 가장 높은 하나: 확정·같은 캐릭터 20 > 확정 15 > 투표 중·같은 캐릭터 12 > 투표 중 8
     let adjacent = 0;
     for (let member = 0; member < memberCount; member++) {
-      if (touches(busy[member])) adjacent += SCORE_ADJACENT_PER_MEMBER;
+      if (touches(busySameCharacter[member])) adjacent += SCORE_ADJACENT_SAME_CHARACTER;
+      else if (touches(busy[member])) adjacent += SCORE_ADJACENT_PER_MEMBER;
+      else if (touches(pendingSameCharacter[member])) adjacent += SCORE_PENDING_ADJACENT_SAME_CHARACTER;
       else if (touches(pendingByMember[member])) adjacent += SCORE_PENDING_ADJACENT_PER_MEMBER;
     }
     return total + Math.min(adjacent, SCORE_ADJACENT_MAX);
