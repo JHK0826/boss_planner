@@ -375,6 +375,13 @@ try {
   await card.getByLabel("데미안 H/2", { exact: true }).waitFor();
   await card.getByLabel("검은 마법사 H", { exact: true }).waitFor();
   await card.getByText("주간 2 · 월간 1").waitFor();
+  // 이름 글씨 대신 보스 이미지
+  await card.getByLabel("스우 EX/2 클리어").locator("img.boss-img").waitFor();
+  assert.ok(
+    await card.getByLabel("검은 마법사 H", { exact: true }).locator("img.boss-img").evaluate((img) =>
+      img.complete ? img.naturalWidth > 0 : new Promise((resolve) => img.addEventListener("load", () => resolve(img.naturalWidth > 0))),
+    ),
+  );
   await a.getByRole("button", { name: "새로고침" }).click();
   await card.getByLabel("스우 EX/2 클리어").waitFor();
   await shot(a, "13-characters");
