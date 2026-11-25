@@ -101,6 +101,36 @@ describe("recommendStarts: 점수", () => {
     expect(recommendStarts({ ...input, busy: [raid], limit: 2 })).toEqual([at(0, 20), at(0, 22)]);
   });
 
+  it("다른 파티가 투표 중인 후보 바로 앞뒤 시각을 조금 우선한다", () => {
+    // 0일째 18~24시 가능. 같은 파티원이 있는 다른 파티가 21:00~22:00 후보로 투표 중
+    const blocked = onlyFree(WEEK, [at(0, 18), at(0, 24)]);
+    const theirs = range(at(0, 21), at(0, 22));
+    const input = { totalSlots: WEEK, durationSlots: 2, blocked: [blocked], pending: theirs, earliestSlot: 0 };
+
+    // 누구의 후보인지 모르면 겹치지 않는 이른 시각부터 (예전 동작)
+    expect(recommendStarts({ ...input, limit: 2 })).toEqual([at(0, 18), at(0, 19)]);
+    // 그 파티원 기준으로 알면 후보 바로 앞(20:00)과 바로 뒤(22:00)가 먼저
+    expect(recommendStarts({ ...input, pendingByMember: [theirs], limit: 2 })).toEqual([at(0, 20), at(0, 22)]);
+  });
+
+  it("확정 레이드 앞뒤가 투표 중 후보 앞뒤보다 먼저이고, 붙는 파티원이 많을수록 먼저다", () => {
+    // 0일째 18~24시 가능. 파티원 0의 확정 레이드 19:00~20:00, 다른 파티 투표 중 후보 22:00~23:00
+    const raid = range(at(0, 19), at(0, 20));
+    const theirs = range(at(0, 22), at(0, 23));
+    const free = onlyFree(WEEK, [at(0, 18), at(0, 24)]);
+    const input = { totalSlots: WEEK, durationSlots: 2, earliestSlot: 0, limit: 2, pending: theirs };
+
+    // 한 명: 레이드 앞뒤(18:00, 20:00, 각 15점)가 투표 중 후보 앞뒤(21:00, 23:00, 각 10점)보다 먼저
+    expect(recommendStarts({ ...input, blocked: [[...free, ...raid]], busy: [raid], pendingByMember: [theirs] })).toEqual([
+      at(0, 18),
+      at(0, 20),
+    ]);
+    // 두 명이 모두 그 투표 중 후보의 파티에 있으면 21:00, 23:00이 10×2 = 20점으로 레이드 앞뒤(15점)보다 먼저
+    expect(
+      recommendStarts({ ...input, blocked: [[...free, ...raid], free], busy: [raid, []], pendingByMember: [theirs, theirs] }),
+    ).toEqual([at(0, 21), at(0, 23)]);
+  });
+
   it("다른 파티가 투표 중인 후보와 겹치는 시각은 뒤로 미룬다", () => {
     const blocked = onlyFree(WEEK, [at(0, 20), at(0, 23)]);
     const pending = range(at(0, 20), at(0, 21));

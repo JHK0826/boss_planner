@@ -154,6 +154,7 @@ describe("미리 제출·투표와 확정", () => {
     const { partyId: other } = await createParty(db, "a", { name: "데미안팟", bosses: [{ name: "데미안", difficulty: "HARD" }], durationMinutes: 60, characterId: "char-a" }, THU);
     const slots = await loadPendingSlots(db, other, ["a"], { startMs: NEXT_THU, totalSlots: 7 * 48 }, early);
     const saturday20 = 2 * 48 + 40;
-    expect(slots).toContain(saturday20);
+    expect(slots.all).toContain(saturday20);
+    expect(slots.byMember[0]).toContain(saturday20);
   });
 });

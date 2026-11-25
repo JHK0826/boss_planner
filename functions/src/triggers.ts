@@ -7,6 +7,7 @@ import { runInputDeadlineCheck, sendPushes, toPartyInfo } from "./notify/send";
 import { resolveRaidResult, runDailyClearCheck } from "./schedule/clear";
 import { evaluateSchedule } from "./schedule/evaluate";
 import { openNextPeriod, openSchedules } from "./schedule/open";
+import { refreshNeighborSchedules } from "./schedule/refresh";
 import { sweepSchedules } from "./schedule/sweep";
 
 /** 불가 시간이 바뀌면: 전원 제출 시 추천 후보 계산, 겹치는 시간이 없으면 SKIPPED */
@@ -77,6 +78,13 @@ export const onScheduleStateChange = onDocumentWritten(
     // 이번 주기 레이드가 끝나면 다음 주 일정을 미리 연다 (주간 파티).
     if (after && before?.state !== after.state) {
       await openNextPeriod(db, event.params.partyId, after, Date.now());
+    }
+    // 확정되면, 파티원이 겹치는 다른 파티 중 아직 아무도 투표하지 않은 일정은 그 시간에 맞춰 다시 추천한다.
+    // 실패해도 이 파티의 알림은 보낸다.
+    if (after?.state === "LOCKED" && (before?.state === "OPEN" || before?.state === "RETRY")) {
+      await refreshNeighborSchedules(db, event.params.partyId, after, Date.now()).catch((error) =>
+        console.error("refreshNeighborSchedules failed", (error as Error).message),
+      );
     }
     const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());
     if (!party) return;

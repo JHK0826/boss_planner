@@ -73,6 +73,19 @@ describe("scheduleNotifications", () => {
     expect(nextRound).toMatchObject([{ body: expect.stringContaining("다음 후보") }]);
   });
 
+  it("다른 파티 확정으로 후보를 다시 고르면 그 이유로 알린다", () => {
+    const recommended = { ...base, round: 1, candidates: [candidate], inputsKey: "k", recommendReason: "inputs" };
+    const refreshed = notify(recommended, {
+      ...recommended,
+      round: 2,
+      candidates: [{ slotId: "20261114-2100" }],
+      recommendReason: "neighbor",
+    });
+    expect(refreshed).toMatchObject([
+      { uids: ["a", "b", "c"], body: "같은 파티원이 있는 다른 파티 일정이 확정되어 추천 시간을 다시 골랐습니다. 투표해 주세요." },
+    ]);
+  });
+
   it("확정되면 시간과 함께 알린다", () => {
     const before = { ...base, round: 1, candidates: [candidate], unanimous: [0] };
     expect(notify(before, { ...before, state: "LOCKED", confirmed })).toMatchObject([

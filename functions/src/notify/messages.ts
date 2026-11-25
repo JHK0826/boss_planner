@@ -117,7 +117,11 @@ export function scheduleNotifications(
     pushes.push(
       push(
         everyone,
-        nextRound ? "전원이 동의한 시간이 없어 다음 후보가 나왔습니다. 다시 투표해 주세요." : "추천 시간이 나왔습니다. 투표해 주세요.",
+        after.recommendReason === "neighbor"
+          ? "같은 파티원이 있는 다른 파티 일정이 확정되어 추천 시간을 다시 골랐습니다. 투표해 주세요."
+          : nextRound
+            ? "전원이 동의한 시간이 없어 다음 후보가 나왔습니다. 다시 투표해 주세요."
+            : "추천 시간이 나왔습니다. 투표해 주세요.",
       ),
     );
   }

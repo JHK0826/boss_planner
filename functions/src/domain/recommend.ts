@@ -7,6 +7,8 @@
  * 2. 시작 시각마다 점수를 매긴다. 높을수록 먼저 추천한다.
  *      + 파티 선호 시간대 안에 온전히 들어감
  *      + 파티원의 다른 확정 레이드 바로 앞이나 뒤 (한 번 접속에 몰아서 돌 수 있음)
+ *      + 파티원이 겹치는 다른 파티가 투표 중인 후보 바로 앞이나 뒤 (확정 레이드보다 조금 덜).
+ *        다른 파티 후보는 보통 요일마다 하나씩이라, 어느 후보로 확정되든 이어서 돌 시각이 남는다.
  *      − 파티원이 겹치는 다른 파티가 투표 중인 후보와 겹침 (나중에 한쪽이 거절당해 다시 투표하게 됨)
  *      + 정각에 시작
  *      + 주기 앞쪽 날짜 (미클리어 때 다시 잡을 여유가 남음)
@@ -19,6 +21,7 @@ export const MAX_CANDIDATES = 6;
 
 const SCORE_PREFERRED = 100;
 const SCORE_ADJACENT_PER_MEMBER = 15;
+const SCORE_PENDING_ADJACENT_PER_MEMBER = 10;
 const SCORE_ADJACENT_MAX = 60;
 const SCORE_PENDING_OVERLAP = -60;
 const SCORE_ON_THE_HOUR = 5;
@@ -38,6 +41,8 @@ export interface RecommendInput {
   busy?: Iterable<number>[];
   /** 파티원이 겹치는 다른 파티가 투표 중인 후보가 차지한 칸 */
   pending?: Iterable<number>;
+  /** 파티원별 다른 파티의 투표 중 후보 칸 (busy와 같은 파티원 순서). 그 앞뒤에 붙는 시각을 조금 우선한다 */
+  pendingByMember?: Iterable<number>[];
   /** 파티 선호 시간대에 속하는 칸 */
   preferred?: Iterable<number>;
   limit?: number;
@@ -57,6 +62,8 @@ export function recommendStarts(input: RecommendInput): number[] {
   const offered = new Set(input.alreadyOffered ?? []);
   const busy = (input.busy ?? []).map((member) => new Set(member));
   const pending = new Set(input.pending ?? []);
+  const pendingByMember = (input.pendingByMember ?? []).map((member) => new Set(member));
+  const memberCount = Math.max(busy.length, pendingByMember.length);
   const preferred = input.preferred ? new Set(input.preferred) : null;
 
   const score = (start: number): number => {
@@ -65,8 +72,14 @@ export function recommendStarts(input: RecommendInput): number[] {
     if (start % 2 === 0) total += SCORE_ON_THE_HOUR;
     if (preferred && slots.every((slot) => preferred.has(slot))) total += SCORE_PREFERRED;
     if (slots.some((slot) => pending.has(slot))) total += SCORE_PENDING_OVERLAP;
-    const adjacent = busy.filter((member) => member.has(start - 1) || member.has(start + durationSlots)).length;
-    return total + Math.min(adjacent * SCORE_ADJACENT_PER_MEMBER, SCORE_ADJACENT_MAX);
+    const touches = (slots: Set<number> | undefined) => !!slots && (slots.has(start - 1) || slots.has(start + durationSlots));
+    // 파티원마다 확정 레이드 앞뒤면 15, 아니고 투표 중 후보 앞뒤면 10
+    let adjacent = 0;
+    for (let member = 0; member < memberCount; member++) {
+      if (touches(busy[member])) adjacent += SCORE_ADJACENT_PER_MEMBER;
+      else if (touches(pendingByMember[member])) adjacent += SCORE_PENDING_ADJACENT_PER_MEMBER;
+    }
+    return total + Math.min(adjacent, SCORE_ADJACENT_MAX);
   };
 
   // 요일별로 가능한 시작 시각을 점수순으로 모은다.
