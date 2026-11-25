@@ -27,6 +27,13 @@ export interface PartyStatus {
   todos: string[];
 }
 
+/** 이번 주 레이드가 끝나 미리 연 다음 주 일정인가 (주기가 아직 시작하지 않음) */
+export const isUpcoming = (schedule: Schedule | undefined, nowMs: number): boolean => !!schedule && schedule.periodStartMs > nowMs;
+
+/** 지금 진행 중인 주기의 일정 (미리 연 다음 주 일정이 맨 앞에 있어도 이번 주 것을 찾는다) */
+export const currentPeriodSchedule = (schedules: Schedule[], nowMs: number): Schedule | undefined =>
+  schedules.find((s) => s.periodStartMs <= nowMs && nowMs < s.periodEndMs);
+
 /** 정산 탭에서 하는 일. 나머지 할 일(불가 시간 입력, 투표, 일정 확정, 결과 기록, 변경 요청 처리)은 투표 탭에서 한다. */
 export const SETTLEMENT_TODOS = ["정산금 수령 확인", "정산금 지급"];
 
@@ -64,14 +71,18 @@ export function partyStatus(uid: string, party: Party, snapshot: PartySnapshot |
     switch (current.state) {
       case "OPEN":
       case "RETRY": {
+        // 이번 주 레이드가 끝나 미리 연 다음 주 일정: 입력·투표는 할 일, 확정은 목요일부터
+        const upcoming = isUpcoming(current, nowMs);
+        const prefix = upcoming ? "다음 주 " : "";
         const submitted = party.memberUids.filter((m) => snapshot.unavailable[m]?.submitted === true).length;
         const voted = party.memberUids.filter((m) => snapshot.votes[m]?.round === current.round).length;
-        if (snapshot.unavailable[uid]?.submitted !== true) todos.push("불가 시간 입력");
-        else if (current.candidates.length === 0) info = `다른 파티원 입력 대기 (${submitted}/${members})`;
-        else if (snapshot.votes[uid]?.round !== current.round) todos.push("투표");
+        if (snapshot.unavailable[uid]?.submitted !== true) todos.push(`${prefix}불가 시간 입력`);
+        else if (current.candidates.length === 0) info = `${prefix}다른 파티원 입력 대기 (${submitted}/${members})`;
+        else if (snapshot.votes[uid]?.round !== current.round) todos.push(`${prefix}투표`);
+        else if (current.unanimous.length > 0 && upcoming) info = "다음 주 전원 동의 · 목요일부터 확정 가능";
         else if (current.unanimous.length > 0 && isLeader) todos.push("일정 확정");
         else if (current.unanimous.length > 0) info = "파티장 확정 대기";
-        else info = `다른 파티원 투표 대기 (${voted}/${members})`;
+        else info = `${prefix}다른 파티원 투표 대기 (${voted}/${members})`;
         if (current.state === "RETRY" && info) info = `재조정 · ${info}`;
         break;
       }

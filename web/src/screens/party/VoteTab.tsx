@@ -1,9 +1,11 @@
 // 투표 탭: 이번 주기 일정 (불가 시간 입력, 추천·투표, 확정, 변경 요청, 결과 기록). Android PartyScreen.kt의 ScheduleTab과 같음.
+// 이번 주 레이드가 끝나 다음 주 일정을 미리 열었으면, 이번 주 결과를 한 줄로 보여 주고 다음 주 입력·투표를 받는다(확정은 목요일부터).
 import { type ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as api from "../../data/api";
 import { acceptsInput, type Confirmed, type Party, type Schedule, type Vote } from "../../lib/model";
-import { dateTime, dayWithWeekday, range, startOfDay, time } from "../../lib/time";
+import { currentPeriodSchedule, isUpcoming } from "../../lib/partyStatus";
+import { dateTime, dayLabel, dayWithWeekday, range, startOfDay, time, weekdayLabel } from "../../lib/time";
 import { Loading } from "../../ui/common";
 import { type Confirm, memberLabelOf, useParty } from "./context";
 
@@ -14,13 +16,30 @@ export function VoteTab() {
   const inputOpen = schedule ? acceptsInput(schedule) : false;
   // 이번 주기 일정이 아직 없으면 파티장이 바로 열 수 있다.
   const noCurrentSchedule = schedules !== undefined && (!schedule || schedule.periodEndMs <= now);
+  // 미리 연 다음 주 일정
+  const upcoming = isUpcoming(schedule, now);
+  const thisWeek = upcoming && schedules ? currentPeriodSchedule(schedules, now) : undefined;
 
   return (
     <>
-      <h2 style={{ marginTop: 0 }}>이번 주기 일정</h2>
+      {upcoming && schedule ? (
+        <>
+          {thisWeek && <p className="primary-text" style={{ margin: 0, fontWeight: 600 }}>{thisWeekResult(thisWeek)}</p>}
+          <h2 style={{ marginTop: thisWeek ? 8 : 0 }}>
+            다음 주 일정 ({dayLabel(schedule.periodStartMs)}({weekdayLabel(schedule.periodStartMs)}) ~ {dayLabel(schedule.periodEndMs - 1)}(
+            {weekdayLabel(schedule.periodEndMs - 1)})) 미리 조율
+          </h2>
+          <p className="small muted" style={{ margin: 0 }}>
+            이번 주 레이드가 끝나 다음 주 일정을 미리 조율합니다. 불가 시간 입력과 투표를 먼저 하고, 확정은 목요일 00:00부터 할 수 있습니다.
+          </p>
+        </>
+      ) : (
+        <h2 style={{ marginTop: 0 }}>이번 주기 일정</h2>
+      )}
       <ScheduleSection
         party={party}
         schedule={schedule}
+        early={upcoming}
         loading={schedules === undefined}
         submittedCount={party.memberUids.filter((u) => unavailable[u]?.submitted).length}
         mySubmitted={unavailable[uid]?.submitted === true}
@@ -52,7 +71,7 @@ export function VoteTab() {
       )}
       {inputOpen && schedule && (
         <button className="btn-outline full" disabled={busy} onClick={() => navigate(`/parties/${party.id}/unavailable/${schedule.id}`)}>
-          {unavailable[uid]?.submitted ? "불가 시간 수정" : "불가 시간 입력"}
+          {(upcoming ? "다음 주 " : "") + (unavailable[uid]?.submitted ? "불가 시간 수정" : "불가 시간 입력")}
         </button>
       )}
     </>
@@ -62,6 +81,7 @@ export function VoteTab() {
 function ScheduleSection({
   party,
   schedule,
+  early,
   loading,
   submittedCount,
   mySubmitted,
@@ -76,6 +96,8 @@ function ScheduleSection({
 }: {
   party: Party;
   schedule: Schedule | undefined;
+  /** 미리 연 다음 주 일정 (확정은 목요일부터) */
+  early: boolean;
   loading: boolean;
   submittedCount: number;
   mySubmitted: boolean;
@@ -160,7 +182,7 @@ function ScheduleSection({
         <>
           <p style={{ margin: 0 }}>
             불가 시간 제출 {submittedCount}/{memberCount}명
-            {schedule.state === "OPEN" && ` · 마감 ${dateTime(schedule.inputDeadlineMs - 60_000)}`}
+            {schedule.state === "OPEN" && !early && ` · 마감 ${dateTime(schedule.inputDeadlineMs - 60_000)}`}
           </p>
           <p className="small" style={{ margin: 0 }}>
             {mySubmitted ? "전원이 제출하면 추천 시간이 나옵니다." : "아직 제출하지 않았습니다. 안 되는 시간이 없어도 제출해 주세요."}
@@ -171,6 +193,7 @@ function ScheduleSection({
           // 후보가 바뀌거나(round) 저장된 투표가 바뀌면 선택을 처음부터 다시 한다.
           key={`${schedule.round}:${savedVote?.agreed.join(",") ?? "-"}`}
           schedule={schedule}
+          early={early}
           memberCount={memberCount}
           votes={votes}
           savedVote={savedVote}
@@ -288,6 +311,7 @@ function LockedSchedule({
 
 function CandidateVoting({
   schedule,
+  early,
   memberCount,
   votes,
   savedVote,
@@ -297,6 +321,7 @@ function CandidateVoting({
   onAsk,
 }: {
   schedule: Schedule;
+  early: boolean;
   memberCount: number;
   votes: Record<string, Vote>;
   savedVote: Vote | undefined;
@@ -349,7 +374,7 @@ function CandidateVoting({
                   {unanimous ? "전원 동의" : `동의 ${currentVotes.filter((v) => v.agreed.includes(index)).length}/${memberCount}명`}
                 </span>
               </span>
-              {unanimous && isLeader && (
+              {unanimous && isLeader && !early && (
                 <button
                   className="btn"
                   disabled={busy}
@@ -369,7 +394,9 @@ function CandidateVoting({
         {!savedVote && selected.size === 0 ? "모두 안 됨으로 투표" : !savedVote ? "투표하기" : "투표 바꾸기"}
       </button>
       <p className="small" style={{ margin: 0 }}>
-        {schedule.unanimous.length > 0 && isLeader
+        {schedule.unanimous.length > 0 && early
+          ? "전원이 동의한 시간이 있습니다. 목요일 00:00부터 파티장이 확정할 수 있습니다."
+          : schedule.unanimous.length > 0 && isLeader
           ? "전원이 동의한 시간 중 하나를 확정해 주세요."
           : schedule.unanimous.length > 0
             ? "전원이 동의한 시간이 있습니다. 파티장의 확정을 기다립니다."
@@ -379,4 +406,18 @@ function CandidateVoting({
       </p>
     </div>
   );
+}
+
+/** 미리 연 다음 주 일정 위에 보여 줄 이번 주 결과 한 줄 */
+function thisWeekResult(schedule: Schedule): string {
+  switch (schedule.state) {
+    case "SETTLED":
+      return `이번 주 클리어 완료${schedule.confirmed ? ` · ${range(schedule.confirmed.startMs, schedule.confirmed.endMs)}` : ""}. 분배금은 정산 탭에서 정산합니다.`;
+    case "SKIPPED":
+      return "이번 주는 진행하지 않았습니다.";
+    case "EXPIRED":
+      return "이번 주 일정이 종료됐습니다.";
+    default:
+      return "";
+  }
 }

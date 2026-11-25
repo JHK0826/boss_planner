@@ -210,11 +210,11 @@ export const settlementEntries = (partyId: string, periodId: string): Subscribe<
 
 /**
  * 파티 목록의 상태 표시에 필요한 일정 데이터 (Android PartyRepository.partySnapshot과 같음).
- * 일정은 이번 주기와 바로 전 주기 두 개만 읽고, 불가 시간·투표·분배금 구독은 지켜볼 대상이 바뀔 때만 다시 붙인다.
+ * 일정은 최근 세 개(미리 연 다음 주, 이번 주, 지난 주)만 읽고, 불가 시간·투표·분배금 구독은 지켜볼 대상이 바뀔 때만 다시 붙인다.
  */
 export const partySnapshot = (partyId: string): Subscribe<PartySnapshot> =>
   withDetails(
-    recentSchedules(partyId, 2),
+    recentSchedules(partyId, 3),
     snapshotTargets,
     sameTargets,
     (targets) => {

@@ -1,7 +1,7 @@
 // Android app/src/test/.../PartyStatusTest.kt와 같은 경우를 확인한다.
 import { describe, expect, it } from "vitest";
 import type { Party, Schedule, SettlementEntry } from "../src/lib/model";
-import { partyStatus, statusText, tabTodos, type PartySnapshot } from "../src/lib/partyStatus";
+import { currentPeriodSchedule, isUpcoming, partyStatus, statusText, tabTodos, type PartySnapshot } from "../src/lib/partyStatus";
 import { dateTime } from "../src/lib/time";
 
 const hour = 60 * 60 * 1000;
@@ -142,5 +142,26 @@ describe("partyStatus", () => {
     expect(tabTodos(paid)).toEqual({ vote: false, settlement: true });
     expect(tabTodos(status("a", snapshot([])))).toEqual({ vote: false, settlement: false });
     expect(tabTodos(null)).toEqual({ vote: false, settlement: false });
+  });
+
+  it("이번 주 레이드가 끝나 미리 연 다음 주 일정은 '다음 주' 할 일로, 확정은 목요일부터라 안내만 한다", () => {
+    const upcoming = schedule({ periodStartMs: now + 24 * hour, periodEndMs: now + 8 * 24 * hour });
+    const settled = schedule({ id: "W-0", state: "SETTLED" });
+    expect(status("a", snapshot([upcoming, settled]))).toMatchObject(s("다음 주 불가 시간 입력", true));
+    const voting = { ...upcoming, round: 2, candidates: [{ slotId: "x", startMs: 0, endMs: 0 }] };
+    expect(status("a", snapshot([voting], { submitted: ["a", "b"] }))).toMatchObject(s("다음 주 투표", true));
+    const agreed = { ...voting, unanimous: [0] };
+    const both = { submitted: ["a", "b"], votedRound: { a: 2, b: 2 } };
+    // 파티장도 아직 확정할 수 없다.
+    expect(status("a", snapshot([agreed], both))).toMatchObject(s("다음 주 전원 동의 · 목요일부터 확정 가능", false));
+    expect(tabTodos(status("a", snapshot([upcoming])))).toEqual({ vote: true, settlement: false });
+  });
+
+  it("이번 주 일정과 미리 연 다음 주 일정을 나눈다", () => {
+    const upcoming = schedule({ id: "W-2", periodStartMs: now + hour, periodEndMs: now + 7 * 24 * hour });
+    const thisWeek = schedule({ id: "W-1", state: "SETTLED" });
+    expect(isUpcoming(upcoming, now)).toBe(true);
+    expect(isUpcoming(thisWeek, now)).toBe(false);
+    expect(currentPeriodSchedule([upcoming, thisWeek], now)?.id).toBe("W-1");
   });
 });

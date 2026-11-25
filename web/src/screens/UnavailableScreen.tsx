@@ -6,7 +6,7 @@ import * as api from "../data/api";
 import { useMain } from "../main-context";
 import { periodColumns, routineKey } from "../lib/grid";
 import { acceptsInput, type Schedule } from "../lib/model";
-import { SLOT_MS } from "../lib/time";
+import { SLOT_MS, dayLabel } from "../lib/time";
 import { Loading, useToast } from "../ui/common";
 import { BulkFillPanel, SlotGrid } from "../ui/SlotGrid";
 
@@ -104,9 +104,16 @@ export function UnavailableScreen() {
   }
 
   const hasCandidates = schedule.candidates.length > 0;
+  // 이번 주 레이드가 끝나 미리 연 다음 주 일정
+  const upcoming = schedule.periodStartMs > now;
   return (
     <div className="page">
-      <h1>불가 시간 입력</h1>
+      <h1>{upcoming ? "다음 주 불가 시간 입력" : "불가 시간 입력"}</h1>
+      {upcoming && (
+        <p className="small muted" style={{ margin: 0 }}>
+          {dayLabel(schedule.periodStartMs)}(목) ~ {dayLabel(schedule.periodEndMs - 1)}(수) · 미리 입력
+        </p>
+      )}
       <p className="small" style={{ margin: 0 }}>
         {prefilled
           ? "고정 불가 시간으로 채워 두었습니다. 이번 주기에 달라진 부분만 고치고 제출해 주세요."
