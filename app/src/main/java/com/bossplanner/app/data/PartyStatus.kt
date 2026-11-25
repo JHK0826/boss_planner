@@ -53,39 +53,49 @@ object PartyStatuses {
     fun of(uid: String, party: Party, snapshot: PartySnapshot?, nowMs: Long): PartyStatus? {
         if (snapshot == null) return null
         val isLeader = party.leaderUid == uid
-        val members = party.memberUids.size
         val todos = mutableListOf<String>()
         var info = ""
 
         // 끝난 주기의 일정은 "이번 주기"로 보지 않는다.
         val current = snapshot.schedules.firstOrNull()?.takeIf { it.periodEndMs > nowMs }
+        // 그 주기 참여 파티원 (용병으로 대체한 사람 제외). 대체한 본인은 입력·투표·결과 기록을 하지 않는다.
+        val participants = party.participantUids(current)
+        val members = participants.size
+        val replaced = current?.isReplaced(uid) == true
         if (current == null) {
             info = if (party.scheduleStarted) "다음 주기 대기" else "일정 시작 전"
         } else {
             when (current.state) {
                 "OPEN", "RETRY" -> {
-                    val submitted = party.memberUids.count { snapshot.unavailable[it]?.submitted == true }
-                    val voted = party.memberUids.count { snapshot.votes[it]?.round == current.round }
+                    // 이번 주 레이드가 끝나 미리 연 다음 주 일정: 입력·투표는 할 일, 확정은 목요일부터
+                    val upcoming = current.isUpcoming(nowMs)
+                    val prefix = if (upcoming) "다음 주 " else ""
+                    val submitted = participants.count { snapshot.unavailable[it]?.submitted == true }
+                    val voted = participants.count { snapshot.votes[it]?.round == current.round }
                     when {
-                        snapshot.unavailable[uid]?.submitted != true -> todos += "불가 시간 입력"
-                        current.candidates.isEmpty() -> info = "다른 파티원 입력 대기 ($submitted/$members)"
-                        snapshot.votes[uid]?.round != current.round -> todos += "투표"
+                        replaced && current.unanimous.isNotEmpty() && isLeader && !upcoming -> todos += "일정 확정"
+                        replaced -> info = "${prefix}용병으로 대체"
+                        snapshot.unavailable[uid]?.submitted != true -> todos += "${prefix}불가 시간 입력"
+                        current.candidates.isEmpty() -> info = "${prefix}다른 파티원 입력 대기 ($submitted/$members)"
+                        snapshot.votes[uid]?.round != current.round -> todos += "${prefix}투표"
+                        current.unanimous.isNotEmpty() && upcoming -> info = "다음 주 전원 동의 · 목요일부터 확정 가능"
                         current.unanimous.isNotEmpty() && isLeader -> todos += "일정 확정"
                         current.unanimous.isNotEmpty() -> info = "파티장 확정 대기"
-                        else -> info = "다른 파티원 투표 대기 ($voted/$members)"
+                        else -> info = "${prefix}다른 파티원 투표 대기 ($voted/$members)"
                     }
                     if (current.state == "RETRY" && info.isNotEmpty()) info = "재조정 · $info"
                 }
                 "LOCKED" -> {
                     val confirmed = current.confirmed
                     when {
+                        replaced -> info = "용병으로 대체"
                         confirmed != null && nowMs >= confirmed.startMs -> todos += "결과 기록"
                         isLeader && current.changeRequest?.isPending == true -> todos += "변경 요청 처리"
                         confirmed != null -> info = "확정 ${TimeSlots.dateTime(confirmed.startMs)}"
                         else -> info = "확정"
                     }
                 }
-                "VERIFYING" -> todos += "결과 기록"
+                "VERIFYING" -> if (replaced) info = "용병으로 대체" else todos += "결과 기록"
                 "SETTLED" -> {
                     val settlement = current.settlement
                     val mine = snapshot.settlements[current.id]?.firstOrNull { it.uid == uid }

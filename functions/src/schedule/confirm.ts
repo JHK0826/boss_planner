@@ -1,6 +1,7 @@
-import { Timestamp, type DocumentData, type Firestore, type Transaction } from "firebase-admin/firestore";
+import { Timestamp, type DocumentData, type DocumentReference, type Firestore, type Transaction } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
 import { bossesOf } from "../domain/bosses";
+import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { unanimousCandidates } from "../domain/recommend";
 import { slotIdsBetween } from "../domain/time";
 import type { Candidate, Confirmed } from "./model";
@@ -23,6 +24,91 @@ export function releaseBusy(tx: Transaction, db: Firestore, schedule: DocumentDa
   for (const uid of confirmed.memberUids) {
     for (const slotId of slotIds) tx.delete(db.doc(`users/${uid}/busy/${slotId}`));
   }
+}
+
+/**
+ * 그 시간 칸에 이미 다른 레이드(busy)가 있는 파티원. 트랜잭션 안에서 읽으므로, 같은 사람이 속한 두 파티가
+ * 동시에 확정하면 나중 트랜잭션이 다시 실행되어 충돌로 걸린다.
+ * @param own 이 파티·주기의 busy는 충돌로 보지 않는다(교체할 때 원래 시간과 겹치는 칸)
+ */
+export async function readBusyConflicts(
+  tx: Transaction,
+  db: Firestore,
+  memberUids: string[],
+  slotIds: string[],
+  own?: { partyId: string; periodId: string },
+): Promise<string[]> {
+  const refs = memberUids.flatMap((member) => slotIds.map((slotId) => db.doc(`users/${member}/busy/${slotId}`)));
+  if (refs.length === 0) return [];
+  const snaps = await tx.getAll(...refs);
+  const others = snaps.filter(
+    (snap) => snap.exists && !(own && snap.get("partyId") === own.partyId && snap.get("periodId") === own.periodId),
+  );
+  return [...new Set(others.map((snap) => snap.ref.parent.parent!.id))];
+}
+
+/** 충돌한 파티원 이름을 넣은 오류 */
+export function conflictError(party: DocumentData, conflictUids: string[], hint: string): HttpsError {
+  const names = conflictUids.map((member) => {
+    const info = party.members?.[member];
+    return info?.displayName || info?.characterName || "파티원";
+  });
+  return new HttpsError("failed-precondition", `다른 파티 일정과 겹칩니다: ${names.join(", ")}. ${hint}`, {
+    reason: "conflict",
+    conflictUids,
+  });
+}
+
+/** busy 문서 내용. 이어 돌기 추천에서 같은 캐릭터인지 보려고, 그 파티에 넣은 캐릭터를 함께 남긴다. */
+export function busyData(party: DocumentData, partyId: string, periodId: string, candidate: Candidate, member: string): DocumentData {
+  return {
+    partyId,
+    periodId,
+    partyName: party.name,
+    bosses: bossesOf(party),
+    start: candidate.start,
+    end: candidate.end,
+    characterId: (party.members?.[member]?.characterId as string | undefined) ?? null,
+  };
+}
+
+/**
+ * 후보로 확정한다: 참여 파티원의 busy를 만들고 일정을 LOCKED로 바꾼다.
+ * 충돌 검사(readBusyConflicts)는 이 함수를 부르기 전에, 같은 트랜잭션에서 한다.
+ */
+export function writeLock(
+  tx: Transaction,
+  db: Firestore,
+  args: {
+    party: DocumentData;
+    partyId: string;
+    periodId: string;
+    scheduleRef: DocumentReference;
+    candidate: Candidate;
+    memberUids: string[];
+    /** 파티장이 확정(LEADER)했는지, 투표 없이 자동으로 정했는지(AUTO) */
+    confirmedBy: "LEADER" | "AUTO";
+    /** 일정 문서에 함께 쓸 값 */
+    extra?: DocumentData;
+  },
+): void {
+  const { party, partyId, periodId, candidate, memberUids } = args;
+  const slotIds = slotIdsBetween(candidate.start.toMillis(), candidate.end.toMillis());
+  for (const member of memberUids) {
+    for (const slotId of slotIds) {
+      tx.create(db.doc(`users/${member}/busy/${slotId}`), busyData(party, partyId, periodId, candidate, member));
+    }
+  }
+  const confirmed: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids };
+  tx.update(args.scheduleRef, {
+    state: "LOCKED",
+    confirmed,
+    confirmedAt: Timestamp.now(),
+    confirmedBy: args.confirmedBy,
+    changeRequest: null,
+    updatedAt: Timestamp.now(),
+    ...args.extra,
+  });
 }
 
 /**
@@ -59,8 +145,15 @@ export async function confirmSchedule(
     if (schedule.state !== "OPEN" && schedule.state !== "RETRY") {
       throw new HttpsError("failed-precondition", "이미 확정되었거나 종료된 일정입니다.", { reason: "not-open" });
     }
+    // 미리 연 다음 주 일정은 입력과 투표만 미리 하고, 확정은 주기가 시작한 뒤에 한다(목요일 가입·탈퇴를 막지 않도록).
+    if ((schedule.periodStart as Timestamp).toMillis() > nowMs) {
+      throw new HttpsError("failed-precondition", "다음 주 일정은 목요일 00:00부터 확정할 수 있습니다.", {
+        reason: "not-started",
+      });
+    }
 
-    const memberUids = party.memberUids as string[];
+    // 이번 주기 참여 파티원 (용병으로 대체한 사람은 투표·일정에서 빠진다)
+    const memberUids = activeMemberUids(party.memberUids as string[], schedule.mercenaries as MercenaryLike[] | undefined);
     const candidates = (schedule.candidates as Candidate[]) ?? [];
     const candidate = candidates[candidateIndex];
 
@@ -87,39 +180,18 @@ export async function confirmSchedule(
       throw new HttpsError("failed-precondition", "이미 지난 시간은 확정할 수 없습니다.", { reason: "past" });
     }
 
-    const slotIds = slotIdsBetween(startMs, endMs);
-    const busyRefs = memberUids.flatMap((member) => slotIds.map((slotId) => db.doc(`users/${member}/busy/${slotId}`)));
-    const busySnaps = await tx.getAll(...busyRefs);
-    const conflictUids = [...new Set(busySnaps.filter((snap) => snap.exists).map((snap) => snap.ref.parent.parent!.id))];
-    if (conflictUids.length > 0) {
-      const names = conflictUids.map((member) => {
-        const info = party.members?.[member];
-        return info?.displayName || info?.characterName || "파티원";
-      });
-      throw new HttpsError(
-        "failed-precondition",
-        `다른 파티 일정과 겹칩니다: ${names.join(", ")}. 다른 후보를 확정하거나 다시 투표해 주세요.`,
-        { reason: "conflict", conflictUids },
-      );
-    }
+    const conflictUids = await readBusyConflicts(tx, db, memberUids, slotIdsBetween(startMs, endMs));
+    if (conflictUids.length > 0) throw conflictError(party, conflictUids, "다른 후보를 확정하거나 다시 투표해 주세요.");
 
-    const busy = {
+    writeLock(tx, db, {
+      party,
       partyId,
       periodId,
-      partyName: party.name,
-      bosses: bossesOf(party),
-      start: candidate.start,
-      end: candidate.end,
-    };
-    for (const ref of busyRefs) tx.create(ref, busy);
-    const confirmed: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids };
-    tx.update(scheduleRef, {
-      state: "LOCKED",
-      confirmed,
-      confirmedAt: Timestamp.now(),
-      changeRequest: null,
-      unanimous: agreed,
-      updatedAt: Timestamp.now(),
+      scheduleRef,
+      candidate,
+      memberUids,
+      confirmedBy: "LEADER",
+      extra: { unanimous: agreed },
     });
     return { slotId: candidate.slotId };
   });

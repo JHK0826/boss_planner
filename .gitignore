@@ -23,6 +23,8 @@ functions/lib/
 .firebaserc
 *-debug.log
 firebase-export-*/
+# 공개해도 되는 Functions 설정(웹앱 주소)만 담는다. 비밀 값은 넣지 않는다.
+!functions/.env
 
 # Web app
 web/dist/

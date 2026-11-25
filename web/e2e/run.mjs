@@ -172,16 +172,19 @@ try {
   await dot(a, "투표").waitFor();
   step("투표 탭에서 '이번 주기 지금 시작'으로 일정을 열면 투표 탭에 할 일 점이 붙는다");
 
-  // 실행 시각에 따라 이번 주기가 거의 끝나 있을 수 있어서, 주기를 모레부터 7일로 옮겨 추천 후보가 늘 나오게 한다.
+  // 실행 시각에 따라 이번 주기가 거의 끝나 있을 수 있어서, 남은 기간이 3일보다 짧으면 주기 끝을 한 주 늘려 추천 후보가 늘 나오게 한다.
+  // 시작은 그대로 둔다(확정은 주기가 시작한 뒤에만 된다).
   const scheduleRef = (await db.collection(`parties/${partyDoc.id}/schedules`).get()).docs[0].ref;
   const DAY = 24 * 60 * 60 * 1000;
   const KST = 9 * 60 * 60 * 1000;
-  const periodStart = Math.floor((Date.now() + KST) / DAY) * DAY - KST + 2 * DAY;
-  await scheduleRef.update({
-    periodStart: Timestamp.fromMillis(periodStart),
-    periodEnd: Timestamp.fromMillis(periodStart + 7 * DAY),
-    inputDeadline: Timestamp.fromMillis(periodStart),
-  });
+  const original = (await scheduleRef.get()).data();
+  const periodStart = original.periodStart.toMillis();
+  const periodEnd = original.periodEnd.toMillis() - Date.now() < 3 * DAY ? original.periodEnd.toMillis() + 7 * DAY : original.periodEnd.toMillis();
+  await scheduleRef.update({ periodEnd: Timestamp.fromMillis(periodEnd) });
+  // 고정 불가 시간(평일 00:00~18:00 = 하루 36칸)이 이 주기에 채워지는 칸 수
+  let weekdays = 0;
+  for (let t = periodStart; t < periodEnd; t += DAY) if (new Date(t + KST).getUTCDay() % 6 !== 0) weekdays++;
+  const routineCount = weekdays * 36;
 
   await a.getByRole("button", { name: "← 파티 목록" }).click();
   await a.getByText("할 일 · 불가 시간 입력").waitFor();
@@ -223,13 +226,13 @@ try {
   await a.getByRole("button", { name: "불가 시간 입력" }).click();
   await a.getByText("고정 불가 시간으로 채워 두었습니다.", { exact: false }).waitFor();
   await shot(a, "07-unavailable");
-  await a.getByRole("button", { name: "제출 (불가 180칸)" }).click();
+  await a.getByRole("button", { name: `제출 (불가 ${routineCount}칸)` }).click();
   await a.getByText("불가 시간을 제출했습니다").waitFor();
   // 제출하면 투표 탭으로 돌아온다.
   await a.waitForURL(/\/vote$/);
   await a.getByText("불가 시간 제출 1/2명", { exact: false }).waitFor();
   await dot(a, "투표").waitFor({ state: "detached" });
-  assert.equal((await scheduleRef.collection("unavailable").doc(uidA).get()).get("slots").length, 180);
+  assert.equal((await scheduleRef.collection("unavailable").doc(uidA).get()).get("slots").length, routineCount);
   step("불가 시간을 제출하면 투표 탭으로 돌아오고 할 일 점이 사라진다");
 
   await b.getByText("스우팟").click();
@@ -263,7 +266,8 @@ try {
   step("파티 탭에서 파티원의 진행 상태와 불가 시간표를 본다");
 
   await tab(a, "투표");
-  await a.getByRole("button", { name: "확정", exact: true }).first().click();
+  // 변경 요청은 레이드 시작 4시간 전까지라, 넉넉하게 가장 늦은 후보를 확정한다.
+  await a.getByRole("button", { name: "확정", exact: true }).last().click();
   await a.getByRole("dialog", { name: "일정 확정" }).getByRole("button", { name: "확정" }).click();
   await a.getByText("일정을 확정했습니다").waitFor();
   await a.getByText("확정된 시간").waitFor();
@@ -315,7 +319,8 @@ try {
 
   await b.getByRole("button", { name: "← 파티 목록" }).click();
   await b.getByText("스우팟").click();
-  await b.waitForURL(/\/info$/);
+  // 클리어하면 다음 주 일정이 미리 열려, 할 일(다음 주 불가 시간 입력)이 있는 투표 탭부터 열린다.
+  await b.waitForURL(/\/vote$/);
   await tab(b, "정산");
   await b.getByText("경매장에 물건을 내 정산금 가격으로 올리고", { exact: false }).waitFor();
   await b.getByLabel("메시지").fill("경매장에 올렸어요");
@@ -370,6 +375,13 @@ try {
   await card.getByLabel("데미안 H/2", { exact: true }).waitFor();
   await card.getByLabel("검은 마법사 H", { exact: true }).waitFor();
   await card.getByText("주간 2 · 월간 1").waitFor();
+  // 이름 글씨 대신 보스 이미지
+  await card.getByLabel("스우 EX/2 클리어").locator("img.boss-img").waitFor();
+  assert.ok(
+    await card.getByLabel("검은 마법사 H", { exact: true }).locator("img.boss-img").evaluate((img) =>
+      img.complete ? img.naturalWidth > 0 : new Promise((resolve) => img.addEventListener("load", () => resolve(img.naturalWidth > 0))),
+    ),
+  );
   await a.getByRole("button", { name: "새로고침" }).click();
   await card.getByLabel("스우 EX/2 클리어").waitFor();
   await shot(a, "13-characters");
@@ -396,6 +408,93 @@ try {
   await a.getByText("알림 설정이 아직 준비되지 않았습니다.").waitFor();
   assert.equal(await a.getByLabel("알림").isDisabled(), true);
   step("웹 푸시 키가 없으면 알림 스위치를 막고 안내한다");
+
+  // ---------- 다음 주 일정 미리 조율 ----------
+  // 이번 주를 클리어해서 서버가 다음 주 일정을 미리 열어 두었다.
+  await a.getByRole("link", { name: "파티" }).click();
+  await a.getByText("할 일 · 다음 주 불가 시간 입력").waitFor();
+  await a.getByText("스우팟").click();
+  await a.waitForURL(/\/vote$/);
+  await a.getByText("이번 주 클리어 완료", { exact: false }).waitFor();
+  await a.getByText("미리 조율", { exact: false }).first().waitFor();
+  await a.getByRole("button", { name: "다음 주 불가 시간 입력" }).click();
+  await a.getByRole("heading", { name: "다음 주 불가 시간 입력" }).waitFor();
+  await a.getByRole("button", { name: "제출 (불가 180칸)" }).click();
+  await a.getByText("불가 시간을 제출했습니다").waitFor();
+  await a.waitForURL(/\/vote$/);
+
+  await tab(b, "투표");
+  await b.getByRole("button", { name: "다음 주 불가 시간 입력" }).click();
+  await b.getByRole("button", { name: "제출 (불가 0칸)" }).click();
+  await b.getByText("불가 시간을 제출했습니다").waitFor();
+  step("이번 주를 클리어하면 다음 주 일정이 미리 열리고, 파티원이 다음 주 불가 시간을 미리 낸다");
+
+  await b.getByRole("button", { name: "모두 가능" }).click();
+  await b.getByRole("button", { name: "투표하기" }).click();
+  await b.getByText("투표했습니다").waitFor();
+  await a.getByRole("button", { name: "모두 가능" }).click();
+  await a.getByRole("button", { name: "투표하기" }).click();
+  await a.getByText("목요일 00:00부터 파티장이 확정할 수 있습니다.").waitFor();
+  assert.equal(await a.getByRole("button", { name: "확정", exact: true }).count(), 0);
+  await shot(a, "15-next-week");
+  step("전원이 미리 내면 다음 주 투표도 미리 하고, 확정은 목요일부터라 확정 버튼 대신 안내가 보인다");
+
+  // ---------- 이번 주기 용병 ----------
+  const nextRef = (await db.collection(`parties/${partyDoc.id}/schedules`).where("preOpened", "==", true).get()).docs[0].ref;
+  await tab(b, "파티");
+  await b.getByText("다음 주 용병", { exact: true }).waitFor();
+  await b.getByRole("button", { name: "다음 주 용병으로 대체" }).click();
+  const replaceDialog = b.getByRole("dialog", { name: "다음 주 용병으로 대체" });
+  await replaceDialog.getByRole("button", { name: "대체", exact: true }).click();
+  await b.getByText("다음 주를 용병으로 대체했습니다").waitFor();
+  assert.deepEqual(
+    ((await nextRef.get()).get("mercenaries") ?? []).map((m) => [m.name, m.replaces]),
+    [["용병", uidB]],
+  );
+  await b.getByRole("button", { name: "대체 취소" }).waitFor();
+
+  await tab(a, "파티");
+  await a.getByRole("heading", { name: "파티원 2명 · 용병 1명" }).waitFor();
+  await a.getByText("용병 (비숍 대신)").waitFor();
+  await a.locator(`[data-member="${uidB}"]`).getByText("다음 주 용병으로 대체").waitFor();
+  step("파티원이 다음 주를 용병으로 대체하면 파티 탭에 대체 용병이 보인다");
+
+  await a.getByRole("button", { name: "임시 용병 추가" }).click();
+  await a.getByRole("dialog", { name: "임시 용병 추가" }).getByRole("button", { name: "추가", exact: true }).click();
+  await a.getByText("임시 용병을 추가했습니다").waitFor();
+  await a.getByRole("heading", { name: "파티원 2명 · 용병 2명" }).waitFor();
+  await shot(a, "16-mercenary");
+  await a.getByRole("button", { name: "용병 1 빼기" }).click();
+  await a.getByRole("dialog", { name: "임시 용병 빼기" }).getByRole("button", { name: "빼기", exact: true }).click();
+  await a.getByText("임시 용병을 뺐습니다").waitFor();
+  await a.getByRole("heading", { name: "파티원 2명 · 용병 1명" }).waitFor();
+  step("파티장이 임시 용병을 추가하고 뺀다");
+
+  await b.getByRole("button", { name: "대체 취소" }).click();
+  await b.getByRole("dialog", { name: "용병 대체 취소" }).getByRole("button", { name: "대체 취소", exact: true }).click();
+  await b.getByText("대체를 취소했습니다", { exact: false }).waitFor();
+  assert.deepEqual((await nextRef.get()).get("mercenaries"), []);
+  await a.getByRole("heading", { name: "파티원 2명" }).waitFor();
+  step("확정 전에는 대체를 취소할 수 있다");
+
+  // ---------- 투표 없이 자동 지정 ----------
+  await tab(a, "설정");
+  await a.getByRole("checkbox", { name: "투표 없이 자동 지정" }).check();
+  await a.getByRole("button", { name: "저장" }).click();
+  await a.getByText("추천 설정을 저장했습니다").waitFor();
+  assert.equal((await partyDoc.ref.get()).get("autoAssign"), true);
+  await tab(a, "투표");
+  // 미리 연 다음 주라 아직 확정하지 않고, 점수순 1~3위 예정을 보여 준다.
+  await a.getByText("자동 지정 예정", { exact: false }).waitFor();
+  await a.getByText("1위 · ", { exact: false }).waitFor();
+  assert.equal(await a.getByRole("button", { name: "투표하기" }).count(), 0);
+  assert.equal(await a.getByRole("button", { name: "모두 가능" }).count(), 0);
+  const planned = (await nextRef.get()).data();
+  assert.equal(planned.assignMode, "AUTO");
+  assert.equal(planned.state, "OPEN");
+  assert.ok(planned.candidates.length >= 1 && planned.candidates.every((c) => typeof c.score === "number" && Array.isArray(c.reasons)));
+  await shot(a, "17-auto-assign");
+  step("파티장이 투표 없이 자동 지정을 켜면 미리 연 다음 주는 점수순 예정 시간으로 바뀌고 투표 버튼이 없다");
 
   assert.deepEqual(errors, [], `브라우저 오류:\n${errors.join("\n")}`);
   console.log("E2E 통과");

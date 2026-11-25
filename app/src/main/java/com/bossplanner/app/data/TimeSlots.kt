@@ -31,8 +31,10 @@ object TimeSlots {
     /** "11/14 (토)" */
     fun dayWithWeekday(ms: Long): String = "${dayLabel(ms)} (${weekdayLabel(ms)})"
 
-    /** ms가 속한 KST 날짜의 00:00. 변경 요청 마감(전날 23:59) 계산에 쓴다. */
-    fun startOfDay(ms: Long): Long = at(ms).toLocalDate().atStartOfDay(KST).toInstant().toEpochMilli()
+    /** 변경 요청 마감: 레이드 시작 4시간 전 (이 시각부터는 받지 않음). 서버 domain/time.ts와 같다. */
+    fun changeRequestDeadline(raidStartMs: Long): Long = raidStartMs - CHANGE_REQUEST_LEAD_MS
+
+    private const val CHANGE_REQUEST_LEAD_MS = 4 * 60 * 60 * 1000L
 
     /** ms가 속한 주간 주기의 시작: 가장 최근 목요일 00:00 (KST) */
     fun weekStart(ms: Long): Long {

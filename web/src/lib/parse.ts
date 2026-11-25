@@ -65,6 +65,7 @@ export function toParty(id: string, data: DocumentData | undefined): Party | nul
     preferredWindow,
     // 설정이 없는 예전 파티에는 서버 기본값(3시간)이 적용된다.
     minLeadMinutes: num(data.minLeadMinutes) ?? 180,
+    autoAssign: data.autoAssign === true,
   };
 }
 
@@ -104,8 +105,16 @@ export function toSchedule(id: string, data: DocumentData | undefined): Schedule
     ? data.candidates.flatMap((item: DocumentData) => {
         const s = millis(item?.start);
         const e = millis(item?.end);
-        return typeof item?.slotId === "string" && s !== null && e !== null ? [{ slotId: item.slotId, startMs: s, endMs: e }] : [];
+        return typeof item?.slotId === "string" && s !== null && e !== null
+          ? [{ slotId: item.slotId, startMs: s, endMs: e, score: num(item.score), reasons: strings(item.reasons) }]
+          : [];
       })
+    : [];
+
+  const mercenaries = Array.isArray(data.mercenaries)
+    ? data.mercenaries.flatMap((item: DocumentData) =>
+        typeof item?.id === "string" ? [{ id: item.id, name: str(item.name) ?? "용병", replaces: str(item.replaces) }] : [],
+      )
     : [];
 
   return {
@@ -124,5 +133,8 @@ export function toSchedule(id: string, data: DocumentData | undefined): Schedule
     retryCount: num(data.retryCount) ?? 0,
     expiredReason: str(data.expiredReason),
     settlement,
+    mercenaries,
+    assignMode: data.assignMode === "AUTO" ? "AUTO" : "VOTE",
+    confirmedBy: str(data.confirmedBy),
   };
 }

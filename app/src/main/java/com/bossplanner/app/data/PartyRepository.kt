@@ -65,13 +65,13 @@ class PartyRepository(
     /**
      * 파티 목록의 상태 표시에 필요한 일정 데이터를 실시간으로 모은다.
      *
-     * - 일정은 이번 주기와 바로 전 주기 두 개만 읽는다(지난 주기의 끝나지 않은 정산을 찾는 데 충분하다).
+     * - 일정은 최근 세 개(미리 연 다음 주, 이번 주, 지난 주)만 읽는다(지난 주기의 끝나지 않은 정산을 찾는 데 충분하다).
      * - 입력·투표 중이면 그 일정의 불가 시간과 투표를, 정산 중인 일정은 분배금 상태를 함께 지켜본다.
      * - 이 하위 구독은 "무엇을 지켜봐야 하는지"가 바뀔 때만 다시 붙인다. 후보나 동의 상태처럼
      *   일정 문서의 다른 값이 바뀔 때는 그대로 두고, 바뀐 일정만 화면에 반영한다.
      */
     fun partySnapshot(partyId: String): Flow<PartySnapshot> =
-        recentSchedules(partyId, limit = 2).withDetails(
+        recentSchedules(partyId, limit = 3).withDetails(
             keyOf = SnapshotTargets::of,
             details = { targets -> snapshotDetails(partyId, targets) },
         ) { schedules, details ->
@@ -251,6 +251,21 @@ class PartyRepository(
 
     suspend fun respondToChange(partyId: String, periodId: String, approve: Boolean) {
         call("approveChange", mapOf("partyId" to partyId, "periodId" to periodId, "approve" to approve))
+    }
+
+    /** 이번 주기를 용병으로 대체한다. 이름을 비우면 "용병" */
+    suspend fun replaceWithMercenary(partyId: String, periodId: String, name: String) {
+        call("replaceWithMercenary", mapOf("partyId" to partyId, "periodId" to periodId, "name" to name))
+    }
+
+    /** 파티장이 이번 주기에만 쓰는 임시 용병을 추가한다. 이름을 비우면 "용병 N" */
+    suspend fun addMercenary(partyId: String, periodId: String, name: String) {
+        call("addMercenary", mapOf("partyId" to partyId, "periodId" to periodId, "name" to name))
+    }
+
+    /** 용병을 뺀다: 대체 용병이면 대체 취소(본인, 확정 전), 임시 용병이면 파티장이 뺀다. */
+    suspend fun removeMercenary(partyId: String, periodId: String, mercenaryId: String) {
+        call("removeMercenary", mapOf("partyId" to partyId, "periodId" to periodId, "mercenaryId" to mercenaryId))
     }
 
     /**
@@ -471,6 +486,14 @@ class PartyRepository(
                     netAmount = (m["netAmount"] as? Number)?.toLong(),
                     amountPerPerson = (m["amountPerPerson"] as? Number)?.toLong(),
                     completed = m["completed"] as? Boolean ?: false,
+                )
+            },
+            mercenaries = (doc.get("mercenaries") as? List<*>).orEmpty().mapNotNull { item ->
+                val m = item as? Map<*, *> ?: return@mapNotNull null
+                Mercenary(
+                    id = m["id"] as? String ?: return@mapNotNull null,
+                    name = m["name"] as? String ?: "용병",
+                    replaces = m["replaces"] as? String,
                 )
             },
         )

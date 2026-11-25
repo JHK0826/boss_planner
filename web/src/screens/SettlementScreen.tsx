@@ -5,13 +5,26 @@ import { FirebaseError } from "firebase/app";
 import { useEffect, useRef, useState } from "react";
 import * as api from "../data/api";
 import { toJpeg } from "../lib/image";
-import { type ChatMessage, type Party, type Schedule, type SettlementEntry, memberLabel } from "../lib/model";
+import {
+  type ChatMessage,
+  type Mercenary,
+  type Party,
+  type Schedule,
+  type SettlementEntry,
+  isMercenaryId,
+  memberLabel,
+  mercenaryDisplayName,
+} from "../lib/model";
 import { korean, meso } from "../lib/money";
 import { useSubscription } from "../lib/useSubscription";
 import { dateTime, range } from "../lib/time";
 import { Chips, Loading, useToast } from "../ui/common";
 
-const nameOf = (party: Party, uid: string) => memberLabel(party.members[uid]);
+/** 이름: 파티원 또는 그 주기 용병 */
+const nameOf = (party: Party, uid: string, mercenaries: Mercenary[] = []) => {
+  const merc = mercenaries.find((m) => m.id === uid);
+  return merc ? mercenaryDisplayName(party, merc) : memberLabel(party.members[uid]);
+};
 
 /**
  * 클리어한 일정의 분배금 정산과 채팅. 파티 화면의 정산 탭 안에 들어간다.
@@ -67,7 +80,14 @@ export function SettlementContent({ uid, party, periodId }: { uid: string; party
           onRegister={(sale, fee, weights) =>
             run("분배금을 등록했습니다. 파티원에게 알림을 보냈습니다", () => api.registerSettlement(partyId, periodId, sale, fee, weights))
           }
-          onMarkPaid={(recipient) => run(`${nameOf(party, recipient)}님에게 지급함으로 표시했습니다`, () => api.markPaid(partyId, periodId, recipient))}
+          onMarkPaid={(recipient) =>
+            run(
+              isMercenaryId(recipient)
+                ? `${nameOf(party, recipient, schedule.mercenaries)}에게 직접 지급했습니다`
+                : `${nameOf(party, recipient)}님에게 지급함으로 표시했습니다`,
+              () => api.markPaid(partyId, periodId, recipient),
+            )
+          }
           onConfirmReceived={() => run("수령을 확인했습니다", () => api.confirmReceived(partyId, periodId))}
         />
       </div>
@@ -119,8 +139,12 @@ function SettlementStatus({
   // 등록되거나 바뀌면 입력 창을 닫는다 (Android의 remember(settlement)와 같음).
   const settlementKey = settlement ? `${settlement.sellerUid}:${settlement.saleAmount}:${settlement.feePercent}:${settlement.netAmount}` : "";
   useEffect(() => setEditing(!settlementKey), [settlementKey]);
-  // 이 레이드에 참여한 사람 (확정 당시 파티원)
-  const participants = schedule.confirmed?.memberUids.length ? schedule.confirmed.memberUids : party.memberUids;
+  // 이 레이드에 참여한 사람 (확정 당시 파티원) + 용병. 용병은 1인분을 받고 판매자가 직접 지급한다.
+  const mercenaries = schedule.mercenaries;
+  const participants = [
+    ...(schedule.confirmed?.memberUids.length ? schedule.confirmed.memberUids : party.memberUids),
+    ...mercenaries.map((m) => m.id),
+  ];
 
   if (schedule.state !== "SETTLED") return <p>클리어한 일정에서만 정산할 수 있습니다.</p>;
 
@@ -146,17 +170,25 @@ function SettlementStatus({
               <div key={entry.uid} className="row">
                 <div className="grow stack" style={{ gap: 0 }}>
                   <span className="small">
-                    {nameOf(party, entry.uid)}
+                    {nameOf(party, entry.uid, mercenaries)}
                     {entry.uid === uid && " (나)"} 정산금
                   </span>
                   <span style={{ fontSize: 18, fontWeight: 600 }}>{meso(entry.amount)}</span>
                   <span className={`small ${entry.status === "RECEIVED" ? "primary-text" : "muted"}`}>
-                    {entry.status === "PAID" ? "지급함 · 수령 확인 대기" : entry.status === "RECEIVED" ? "수령 확인" : "대기"}
+                    {isMercenaryId(entry.uid)
+                      ? entry.status === "RECEIVED"
+                        ? "직접 지급 완료"
+                        : "대기 · 판매자가 게임에서 직접 지급"
+                      : entry.status === "PAID"
+                        ? "지급함 · 수령 확인 대기"
+                        : entry.status === "RECEIVED"
+                          ? "수령 확인"
+                          : "대기"}
                   </span>
                 </div>
                 {isSeller && entry.status === "PENDING" && (
                   <button className="btn" disabled={busy} onClick={() => onMarkPaid(entry.uid)}>
-                    지급함
+                    {isMercenaryId(entry.uid) ? "직접 지급함" : "지급함"}
                   </button>
                 )}
                 {entry.uid === uid && entry.status === "PAID" && (
@@ -175,7 +207,15 @@ function SettlementStatus({
       )}
 
       {canEdit && editing ? (
-        <SettlementForm sellerUid={uid} party={party} participants={participants} registered={!!settlement} busy={busy} onRegister={onRegister} />
+        <SettlementForm
+          sellerUid={uid}
+          party={party}
+          participants={participants}
+          mercenaries={mercenaries}
+          registered={!!settlement}
+          busy={busy}
+          onRegister={onRegister}
+        />
       ) : (
         canEdit && (
           <button className="btn-text" style={{ alignSelf: "flex-start" }} disabled={busy} onClick={() => setEditing(true)}>
@@ -189,12 +229,13 @@ function SettlementStatus({
 
 /**
  * 분배금 계산·등록. 경매장 판매액과 수수료를 넣으면 실수령액과 파티원 정산금을 바로 보여 준다.
- * 등록하는 사람이 판매자다. 인원은 이 레이드에 참여한 파티원으로 고정이다.
+ * 등록하는 사람이 판매자다. 인원은 이 레이드에 참여한 파티원과 그 주기 용병으로 고정이다.
  */
 function SettlementForm({
   sellerUid,
   party,
   participants,
+  mercenaries,
   registered,
   busy,
   onRegister,
@@ -202,6 +243,7 @@ function SettlementForm({
   sellerUid: string;
   party: Party;
   participants: string[];
+  mercenaries: Mercenary[];
   registered: boolean;
   busy: boolean;
   onRegister: (saleAmount: number, feePercent: number, weights: Record<string, number>) => Promise<boolean>;
@@ -269,14 +311,14 @@ function SettlementForm({
           {participants.map((member) => (
             <label key={member} className="row">
               <span className="grow">
-                {nameOf(party, member)}
+                {nameOf(party, member, mercenaries)}
                 {member === sellerUid && " (판매자)"}
               </span>
               <input
                 className="input"
                 style={{ width: 88, borderColor: weightValid(member) ? undefined : "var(--error)" }}
                 inputMode="numeric"
-                aria-label={`${nameOf(party, member)} 비율`}
+                aria-label={`${nameOf(party, member, mercenaries)} 비율`}
                 value={weightInputs[member] ?? ""}
                 disabled={busy}
                 onChange={(e) => setWeightInputs({ ...weightInputs, [member]: e.target.value.replace(/\D/g, "").slice(0, 3) })}
@@ -292,7 +334,7 @@ function SettlementForm({
           {detailed ? (
             recipients.map((member) => (
               <div key={member} className="stack" style={{ gap: 0 }}>
-                <span className="small muted">{nameOf(party, member)} 정산금</span>
+                <span className="small muted">{nameOf(party, member, mercenaries)} 정산금</span>
                 <span style={{ fontSize: 18, fontWeight: 600 }}>
                   {meso(result.amounts[member] ?? 0)} ({korean(result.amounts[member] ?? 0)})
                 </span>
@@ -300,7 +342,11 @@ function SettlementForm({
             ))
           ) : (
             <>
-              <span className="small muted">파티원 1인 정산금 ({recipients.length}명)</span>
+              <span className="small muted">
+                {mercenaries.length > 0
+                  ? `1인 정산금 (${recipients.length}명 · 용병 ${mercenaries.length}명 포함)`
+                  : `파티원 1인 정산금 (${recipients.length}명)`}
+              </span>
               <span style={{ fontSize: 22, fontWeight: 600 }}>
                 {meso(amounts[0])} ({korean(amounts[0])})
               </span>

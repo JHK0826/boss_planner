@@ -2,11 +2,13 @@ import { getFirestore } from "firebase-admin/firestore";
 import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { REGION, TIME_ZONE } from "./config";
+import { isMercenaryId } from "./domain/mercenary";
 import { messageNotification, scheduleNotifications, settlementNotifications } from "./notify/messages";
 import { runInputDeadlineCheck, sendPushes, toPartyInfo } from "./notify/send";
 import { resolveRaidResult, runDailyClearCheck } from "./schedule/clear";
 import { evaluateSchedule } from "./schedule/evaluate";
-import { openSchedules } from "./schedule/open";
+import { openNextPeriod, openSchedules } from "./schedule/open";
+import { refreshNeighborSchedules } from "./schedule/refresh";
 import { sweepSchedules } from "./schedule/sweep";
 
 /** 불가 시간이 바뀌면: 전원 제출 시 추천 후보 계산, 겹치는 시간이 없으면 SKIPPED */
@@ -33,6 +35,9 @@ export const onClearWrite = onDocumentWritten(
     if (result !== "CLEARED" && result !== "NOT_CLEARED") return;
     const db = getFirestore();
     const scheduleRef = db.doc(`parties/${event.params.partyId}/schedules/${event.params.periodId}`);
+    // 용병으로 대체해 레이드에 가지 않은 사람의 기록은 무시한다.
+    const participants = (await scheduleRef.get()).get("confirmed.memberUids") as string[] | undefined;
+    if (participants && !participants.includes(event.params.uid)) return;
     await resolveRaidResult(db, scheduleRef, result === "CLEARED", "MANUAL", Date.now());
   },
 );
@@ -72,9 +77,25 @@ export const onScheduleStateChange = onDocumentWritten(
   { document: "parties/{partyId}/schedules/{periodId}", region: REGION },
   async (event) => {
     const db = getFirestore();
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    // 이번 주기 레이드가 끝나면 다음 주 일정을 미리 연다 (주간 파티).
+    if (after && before?.state !== after.state) {
+      await openNextPeriod(db, event.params.partyId, after, Date.now());
+    }
+    // 확정되거나 확정 시간이 바뀌면(자동 지정 교체), 파티원이 겹치는 다른 파티 중 아직 아무도 투표하지 않은
+    // 일정은 그 시간에 맞춰 다시 추천한다. 실패해도 이 파티의 알림은 보낸다.
+    const lockedNow = after?.state === "LOCKED" && (before?.state === "OPEN" || before?.state === "RETRY");
+    const switched =
+      after?.state === "LOCKED" && before?.state === "LOCKED" && before.confirmed?.slotId !== after.confirmed?.slotId;
+    if (lockedNow || switched) {
+      await refreshNeighborSchedules(db, event.params.partyId, after, Date.now()).catch((error) =>
+        console.error("refreshNeighborSchedules failed", (error as Error).message),
+      );
+    }
     const party = toPartyInfo(await db.doc(`parties/${event.params.partyId}`).get());
     if (!party) return;
-    await sendPushes(db, scheduleNotifications(party, event.data?.before.data(), event.data?.after.data()));
+    await sendPushes(db, scheduleNotifications(party, before, after));
   },
 );
 
@@ -90,7 +111,8 @@ export const onSettlementWrite = onDocumentWritten(
     ]);
     const party = toPartyInfo(partySnap);
     const sellerUid = scheduleSnap.get("settlement.sellerUid") as string | undefined;
-    if (!party || !sellerUid) return;
+    // 용병 몫은 판매자가 직접 지급하고 끝내므로 알릴 사람이 없다.
+    if (!party || !sellerUid || isMercenaryId(event.params.uid)) return;
     await sendPushes(
       db,
       settlementNotifications(party, sellerUid, event.params.uid, event.data?.before.data(), event.data?.after.data()),

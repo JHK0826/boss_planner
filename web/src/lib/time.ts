@@ -1,7 +1,7 @@
 // 시간 표시. 모든 기준은 KST(UTC+9, 서머타임 없음)다. 칸 ID와 주기 계산은 서버 코드를 그대로 쓴다.
-import { SLOT_MS, kstWeekday, slotIdFromMs, startOfKstDay } from "@shared/domain/time";
+import { SLOT_MS, changeRequestDeadline, kstWeekday, slotIdFromMs, startOfKstDay } from "@shared/domain/time";
 
-export { SLOT_MS, slotIdFromMs as slotId, startOfKstDay as startOfDay };
+export { SLOT_MS, changeRequestDeadline, slotIdFromMs as slotId, startOfKstDay as startOfDay };
 
 export const SLOTS_PER_DAY = 48;
 export const DAY_MS = SLOTS_PER_DAY * SLOT_MS;

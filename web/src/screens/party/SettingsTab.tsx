@@ -1,4 +1,4 @@
-// 파티 설정 탭: 추천 설정(선호 시간대·최소 여유 시간), 파티장 위임, 파티 탈퇴. Android PartyScreen.kt의 PartySettingsTab과 같음.
+// 파티 설정 탭: 추천 설정(선호 시간대·최소 여유 시간·투표 없이 자동 지정), 파티장 위임, 파티 탈퇴. Android PartyScreen.kt의 PartySettingsTab과 같음.
 import { useEffect, useState } from "react";
 import * as api from "../../data/api";
 import { acceptsInput } from "../../lib/model";
@@ -8,7 +8,11 @@ import { memberLabelOf, useParty } from "./context";
 export function SettingsTab() {
   const { uid, party, schedule, busy, run, ask } = useParty();
   const isLeader = party.leaderUid === uid;
-  const saved: RecommendSettings = { preferredWindow: party.preferredWindow, minLeadMinutes: party.minLeadMinutes };
+  const saved: RecommendSettings = {
+    preferredWindow: party.preferredWindow,
+    minLeadMinutes: party.minLeadMinutes,
+    autoAssign: party.autoAssign,
+  };
   const savedKey = JSON.stringify(saved);
   const [draft, setDraft] = useState<RecommendSettings>(saved);
   // 다른 기기에서 바뀌거나 저장되면 편집 중인 값도 맞춘다.
@@ -26,20 +30,26 @@ export function SettingsTab() {
           <RecommendSettingsEditor settings={draft} onChange={setDraft} disabled={busy} />
           {schedule && acceptsInput(schedule) && schedule.candidates.length > 0 && (
             <p className="small error" style={{ margin: 0 }}>
-              지금 투표 중입니다. 설정을 바꾸면 추천 시간을 다시 계산하고 투표도 다시 합니다.
+              {draft.autoAssign && !party.autoAssign
+                ? "지금 투표 중입니다. 자동 지정을 켜면 투표 없이 점수 1위 시간으로 바로 확정합니다(미리 연 다음 주는 목요일 00:00)."
+                : "지금 조율 중입니다. 설정을 바꾸면 추천 시간을 다시 계산합니다."}
             </p>
           )}
           <button
             className="btn full"
             disabled={busy || !changed}
-            onClick={() => run("추천 설정을 저장했습니다", () => api.updatePartyPreferences(party.id, draft.preferredWindow, draft.minLeadMinutes))}
+            onClick={() =>
+              run("추천 설정을 저장했습니다", () =>
+                api.updatePartyPreferences(party.id, draft.preferredWindow, draft.minLeadMinutes, draft.autoAssign),
+              )
+            }
           >
             저장
           </button>
         </>
       ) : (
         <>
-          <p style={{ margin: 0 }}>{recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes)}</p>
+          <p style={{ margin: 0 }}>{recommendSettingsSummary(party.preferredWindow, party.minLeadMinutes, party.autoAssign)}</p>
           <p className="small muted" style={{ margin: 0 }}>
             추천 설정은 파티장만 바꿀 수 있습니다.
           </p>

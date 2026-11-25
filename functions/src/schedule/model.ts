@@ -8,7 +8,14 @@ export interface Candidate {
   slotId: string;
   start: Timestamp;
   end: Timestamp;
+  /** 추천 점수 (높을수록 먼저). 0.8.0 전에 만든 후보에는 없다 */
+  score?: number;
+  /** 추천 이유 코드 (domain/recommend.ts의 ReasonCode). 화면이 문구로 바꾼다 */
+  reasons?: string[];
 }
+
+/** 후보를 고른 방식: 투표(VOTE, 요일을 섞은 6개) 또는 투표 없이 자동 지정(AUTO, 점수순 3개) */
+export type AssignMode = "VOTE" | "AUTO";
 
 /** 새 주기의 일정 문서 초깃값 */
 /**

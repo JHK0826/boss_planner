@@ -36,6 +36,26 @@ describe("scheduleNotifications", () => {
     expect(notify(undefined, base)).toMatchObject([{ uids: ["a", "b", "c"], title: "스우팟", partyId: "p1" }]);
   });
 
+  it("다음 주 일정을 미리 열면 미리 조율할 수 있다고 알리고, 시작 전 전원 동의는 목요일부터 확정 가능하다고 알린다", () => {
+    const pre = { ...base, preOpened: true };
+    expect(notify(undefined, pre)).toMatchObject([{ uids: ["a", "b", "c"], body: expect.stringContaining("다음 주 일정을 미리 조율") }]);
+
+    const recommended = { ...pre, round: 1, candidates: [candidate], inputsKey: "k" };
+    expect(notify(recommended, { ...recommended, unanimous: [0] })).toMatchObject([
+      { uids: ["a"], body: expect.stringContaining("목요일 00:00부터 확정") },
+    ]);
+  });
+
+  it("목요일에 미리 연 일정이 이번 주기가 되면 시작을 알리고, 전원 동의가 있으면 파티장에게 확정을 알린다", () => {
+    const pre = { ...base, preOpened: true, round: 1, candidates: [candidate], unanimous: [0] };
+    expect(notify(pre, { ...pre, preOpened: false })).toMatchObject([
+      { uids: ["a", "b", "c"], body: expect.stringContaining("새 주기가 시작") },
+      { uids: ["a"], body: expect.stringContaining("이제 일정을 확정") },
+    ]);
+    const empty = { ...base, preOpened: true };
+    expect(notify(empty, { ...empty, preOpened: false })).toHaveLength(1);
+  });
+
   it("바뀐 것이 없으면 보내지 않는다", () => {
     expect(notify(base, { ...base, updatedAt: 1 })).toEqual([]);
   });
@@ -53,11 +73,55 @@ describe("scheduleNotifications", () => {
     expect(nextRound).toMatchObject([{ body: expect.stringContaining("다음 후보") }]);
   });
 
+  it("다른 파티 확정으로 후보를 다시 고르면 그 이유로 알린다", () => {
+    const recommended = { ...base, round: 1, candidates: [candidate], inputsKey: "k", recommendReason: "inputs" };
+    const refreshed = notify(recommended, {
+      ...recommended,
+      round: 2,
+      candidates: [{ slotId: "20261114-2100" }],
+      recommendReason: "neighbor",
+    });
+    expect(refreshed).toMatchObject([
+      { uids: ["a", "b", "c"], body: "같은 파티원이 있는 다른 파티 일정이 확정되어 추천 시간을 다시 골랐습니다. 투표해 주세요." },
+    ]);
+  });
+
   it("확정되면 시간과 함께 알린다", () => {
     const before = { ...base, round: 1, candidates: [candidate], unanimous: [0] };
     expect(notify(before, { ...before, state: "LOCKED", confirmed })).toMatchObject([
       { uids: ["a", "b", "c"], body: "일정이 확정됐습니다: 11/14(토) 20:00" },
     ]);
+  });
+
+  describe("투표 없이 자동 지정", () => {
+    const top = { slotId: "20261121-2100", start: Timestamp.fromMillis(kst("2026-11-21T21:00:00")) };
+    const second = { slotId: "20261122-2100", start: Timestamp.fromMillis(kst("2026-11-22T21:00:00")) };
+    const preOpened = { ...base, preOpened: true, periodStart: Timestamp.fromMillis(kst("2026-11-19T00:00:00")) };
+
+    it("바로 확정하면 자동으로 정했다고 알리고, 투표하라는 알림은 보내지 않는다", () => {
+      const locked = { ...base, state: "LOCKED", confirmed, confirmedBy: "AUTO", assignMode: "AUTO", round: 1, candidates: [candidate] };
+      expect(notify(base, locked)).toEqual([
+        expect.objectContaining({ uids: ["a", "b", "c"], body: "투표 없이 점수가 가장 높은 시간으로 정했습니다: 11/14(토) 20:00" }),
+      ]);
+    });
+
+    it("미리 연 다음 주는 1위가 정해지거나 바뀔 때 언제 확정되는지 알린다", () => {
+      const planned = { ...preOpened, assignMode: "AUTO", round: 1, candidates: [top, second], inputsKey: "k" };
+      expect(notify(preOpened, planned)).toEqual([
+        expect.objectContaining({ body: "11/19(목) 00:00에 점수가 가장 높은 이 시간으로 자동 확정됩니다: 11/21(토) 21:00" }),
+      ]);
+      // 1위가 그대로면 알리지 않는다.
+      expect(notify(planned, { ...planned, round: 2, candidates: [top] })).toEqual([]);
+      expect(notify(planned, { ...planned, round: 2, candidates: [second, top] })).toMatchObject([
+        { body: expect.stringContaining("11/22(일) 21:00") },
+      ]);
+    });
+
+    it("파티장이 다른 순위로 바꾸면 전원에게 알린다", () => {
+      const locked = { ...base, state: "LOCKED", assignMode: "AUTO", confirmed: { ...confirmed, slotId: "20261114-2000" } };
+      const switched = { ...locked, confirmedBy: "LEADER", confirmed: { slotId: "20261115-2100", start: Timestamp.fromMillis(kst("2026-11-15T21:00:00")) } };
+      expect(notify(locked, switched)).toEqual([expect.objectContaining({ uids: ["a", "b", "c"], body: "파티장이 일정을 바꿨습니다: 11/15(일) 21:00" })]);
+    });
   });
 
   it("변경 요청은 파티장에게, 승인은 전원에게, 거절은 요청자에게 알린다", () => {

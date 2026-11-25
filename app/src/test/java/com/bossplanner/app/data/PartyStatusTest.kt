@@ -34,10 +34,12 @@ class PartyStatusTest {
         changeRequest: ChangeRequest? = null,
         settlement: Settlement? = null,
         periodEnd: Long = start + 7 * 24 * hour,
+        periodStart: Long = start,
+        mercenaries: List<Mercenary> = emptyList(),
     ) = Schedule(
         id = id,
         state = state,
-        periodStartMs = start,
+        periodStartMs = periodStart,
         periodEndMs = periodEnd,
         inputDeadlineMs = start + 24 * hour,
         durationSlots = 2,
@@ -50,6 +52,7 @@ class PartyStatusTest {
         retryCount = 0,
         expiredReason = null,
         settlement = settlement,
+        mercenaries = mercenaries,
     )
 
     private fun snapshot(
@@ -120,6 +123,22 @@ class PartyStatusTest {
     }
 
     @Test
+    fun `용병으로 대체한 사람은 입력·투표·결과 기록을 하지 않고, 나머지만 센다`() {
+        val replacedB = listOf(Mercenary("merc_1", "용병", "b"))
+        assertEquals(PartyStatus("용병으로 대체", false), status("b", snapshot(schedule(mercenaries = replacedB))))
+        assertEquals(
+            PartyStatus("다른 파티원 투표 대기 (1/1)", false),
+            status("a", snapshot(schedule(mercenaries = replacedB, candidates = 2), submitted = setOf("a"), votedRound = mapOf("a" to 1))),
+        )
+        val raid = now + 2 * hour
+        assertEquals(PartyStatus("용병으로 대체", false), status("b", snapshot(schedule(state = "LOCKED", confirmedAt = raid, mercenaries = replacedB)), at = raid))
+        // 파티장이 대체했어도 확정은 파티장의 할 일
+        val replacedA = listOf(Mercenary("merc_2", "용병", "a"))
+        val snap = snapshot(schedule(mercenaries = replacedA, candidates = 2, unanimous = listOf(0)), submitted = setOf("b"), votedRound = mapOf("b" to 1))
+        assertEquals(PartyStatus("일정 확정", true), status("a", snap))
+    }
+
+    @Test
     fun `확정 뒤에는 레이드가 시작되면 결과 기록`() {
         val raid = now + 2 * hour
         val locked = schedule(state = "LOCKED", confirmedAt = raid)
@@ -182,5 +201,21 @@ class PartyStatusTest {
         assertEquals(TabTodos(schedule = false, settlement = true), TabTodos.of(fullStatus("b", snapshot(settled, settlements = paid))))
         assertEquals(TabTodos(schedule = false, settlement = false), TabTodos.of(fullStatus("a", snapshot())))
         assertEquals(TabTodos(schedule = false, settlement = false), TabTodos.of(null))
+    }
+
+    @Test
+    fun `미리 연 다음 주 일정은 다음 주 할 일로 보이고 확정은 목요일부터라 안내만 한다`() {
+        val upcoming = schedule(periodStart = now + 24 * hour, periodEnd = now + 8 * 24 * hour)
+        val settled = schedule(state = "SETTLED", id = "W-0")
+        assertEquals(PartyStatus("다음 주 불가 시간 입력", true), status("a", snapshot(upcoming, settled)))
+        val voting = upcoming.copy(round = 2, candidates = listOf(Candidate("s0", now + 30 * hour, now + 31 * hour)))
+        assertEquals(PartyStatus("다음 주 투표", true), status("a", snapshot(voting, submitted = setOf("a", "b"))))
+        val agreed = voting.copy(unanimous = listOf(0))
+        assertEquals(
+            PartyStatus("다음 주 전원 동의 · 목요일부터 확정 가능", false),
+            status("a", snapshot(agreed, submitted = setOf("a", "b"), votedRound = mapOf("a" to 2, "b" to 2))),
+        )
+        assertEquals(TabTodos(schedule = true, settlement = false), TabTodos.of(fullStatus("a", snapshot(upcoming))))
+        assertEquals("W-0", listOf(upcoming, settled).currentPeriod(now)?.id)
     }
 }

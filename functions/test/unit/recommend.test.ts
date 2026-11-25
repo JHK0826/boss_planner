@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { preferredSlots, recommendStarts, unanimousCandidates } from "../../src/domain/recommend";
+import {
+  comfortSlots,
+  preferredSlots,
+  rankStarts,
+  recommendStarts,
+  unanimousCandidates,
+  usualStartSlots,
+} from "../../src/domain/recommend";
 
 const DAY = 48;
 const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
@@ -101,6 +108,59 @@ describe("recommendStarts: 점수", () => {
     expect(recommendStarts({ ...input, busy: [raid], limit: 2 })).toEqual([at(0, 20), at(0, 22)]);
   });
 
+  it("다른 파티가 투표 중인 후보 바로 앞뒤 시각을 조금 우선한다", () => {
+    // 0일째 18~24시 가능. 같은 파티원이 있는 다른 파티가 21:00~22:00 후보로 투표 중
+    const blocked = onlyFree(WEEK, [at(0, 18), at(0, 24)]);
+    const theirs = range(at(0, 21), at(0, 22));
+    const input = { totalSlots: WEEK, durationSlots: 2, blocked: [blocked], pending: theirs, earliestSlot: 0 };
+
+    // 누구의 후보인지 모르면 겹치지 않는 이른 시각부터 (예전 동작)
+    expect(recommendStarts({ ...input, limit: 2 })).toEqual([at(0, 18), at(0, 19)]);
+    // 그 파티원 기준으로 알면 후보 바로 앞(20:00)과 바로 뒤(22:00)가 먼저
+    expect(recommendStarts({ ...input, pendingByMember: [theirs], limit: 2 })).toEqual([at(0, 20), at(0, 22)]);
+  });
+
+  it("확정 레이드 앞뒤가 투표 중 후보 앞뒤보다 먼저이고, 붙는 파티원이 많을수록 먼저다", () => {
+    // 0일째 18~24시 가능. 파티원 0의 확정 레이드 19:00~20:00, 다른 파티 투표 중 후보 22:00~23:00
+    const raid = range(at(0, 19), at(0, 20));
+    const theirs = range(at(0, 22), at(0, 23));
+    const free = onlyFree(WEEK, [at(0, 18), at(0, 24)]);
+    const input = { totalSlots: WEEK, durationSlots: 2, earliestSlot: 0, limit: 2, pending: theirs };
+
+    // 한 명: 레이드 앞뒤(18:00, 20:00, 각 15점)가 투표 중 후보 앞뒤(21:00, 23:00, 각 8점)보다 먼저
+    expect(recommendStarts({ ...input, blocked: [[...free, ...raid]], busy: [raid], pendingByMember: [theirs] })).toEqual([
+      at(0, 18),
+      at(0, 20),
+    ]);
+    // 두 명이 모두 그 투표 중 후보의 파티에 있으면 21:00, 23:00이 8×2 = 16점으로 레이드 앞뒤(15점)보다 먼저
+    expect(
+      recommendStarts({ ...input, blocked: [[...free, ...raid], free], busy: [raid, []], pendingByMember: [theirs, theirs] }),
+    ).toEqual([at(0, 21), at(0, 23)]);
+  });
+
+  it("이어 돌기는 같은 캐릭터 > 같은 사람(다른 캐릭터) 순이고, 확정 레이드가 투표 중 후보보다 먼저다", () => {
+    // 0일째 19:00~21:30만 가능, 소요 90분(3칸). 19:00 시작(왼쪽 레이드 바로 뒤)과 20:00 시작(오른쪽 레이드 바로 앞)은
+    // 서로 겹쳐 하나만 고를 수 있고, 둘 다 정각이다.
+    const left = range(at(0, 18), at(0, 19));
+    const right = range(at(0, 21) + 1, at(0, 22) + 1);
+    const blocked = [onlyFree(WEEK, [at(0, 19), at(0, 21) + 1])];
+    const input = { totalSlots: WEEK, durationSlots: 3, blocked, earliestSlot: 0 };
+    const leftStart = [at(0, 19)];
+    const rightStart = [at(0, 20)];
+
+    // 확정 레이드 둘: 같은 캐릭터(20) 쪽이 다른 캐릭터(15) 쪽보다 먼저
+    expect(recommendStarts({ ...input, busy: [[...left, ...right]], busySameCharacter: [left] })).toEqual(leftStart);
+    expect(recommendStarts({ ...input, busy: [[...left, ...right]], busySameCharacter: [right] })).toEqual(rightStart);
+    // 다른 캐릭터의 확정 레이드(15)가 같은 캐릭터의 투표 중 후보(12)보다 먼저
+    expect(
+      recommendStarts({ ...input, busy: [right], pending: left, pendingByMember: [left], pendingSameCharacter: [left] }),
+    ).toEqual(rightStart);
+    // 투표 중 후보 둘: 같은 캐릭터(12) 쪽이 다른 캐릭터(8) 쪽보다 먼저
+    expect(
+      recommendStarts({ ...input, pending: [...left, ...right], pendingByMember: [[...left, ...right]], pendingSameCharacter: [right] }),
+    ).toEqual(rightStart);
+  });
+
   it("다른 파티가 투표 중인 후보와 겹치는 시각은 뒤로 미룬다", () => {
     const blocked = onlyFree(WEEK, [at(0, 20), at(0, 23)]);
     const pending = range(at(0, 20), at(0, 21));
@@ -109,6 +169,72 @@ describe("recommendStarts: 점수", () => {
     // 겹치는 시각밖에 없으면 그래도 준다.
     const only = onlyFree(WEEK, [at(0, 20), at(0, 21)]);
     expect(recommendStarts({ totalSlots: WEEK, durationSlots: 2, blocked: [only], pending, earliestSlot: 0 })).toEqual([at(0, 20)]);
+  });
+});
+
+describe("rankStarts: 생활 시간대·평소 시간·순위", () => {
+  // 주기는 목요일(4)에 시작한다: 0일째 목, 1 금, 2 토, 3 일, 4 월
+  const comfort = comfortSlots(WEEK, 4);
+  const allFree = { totalSlots: WEEK, durationSlots: 2, blocked: [[]], earliestSlot: 0 };
+
+  it("아무 때나 되면 새벽·자정·평일 낮보다 저녁이 먼저다", () => {
+    expect(rankStarts({ ...allFree, comfort, mode: "ranked", limit: 1 })).toEqual([{ start: at(0, 18), score: 5, reasons: [] }]);
+    // 보정이 없으면 예전처럼 가장 이른 정각(목 00:00)
+    expect(recommendStarts({ ...allFree, mode: "ranked", limit: 1 })).toEqual([at(0, 0)]);
+  });
+
+  it("새벽밖에 없으면 그래도 고르고, 이유에 새벽·낮·자정을 붙인다", () => {
+    const night = onlyFree(WEEK, [at(0, 3), at(0, 5)]);
+    expect(rankStarts({ ...allFree, blocked: [night], comfort, mode: "ranked", limit: 1 })).toMatchObject([
+      { start: at(0, 3), reasons: ["LATE_NIGHT"] },
+    ]);
+    const day = onlyFree(WEEK, [at(0, 13), at(0, 15)]);
+    expect(rankStarts({ ...allFree, blocked: [day], comfort, mode: "ranked", limit: 1 })).toMatchObject([{ start: at(0, 13), reasons: ["DAYTIME"] }]);
+    const midnight = onlyFree(WEEK, [at(1, 0), at(1, 1)]);
+    expect(rankStarts({ ...allFree, blocked: [midnight], comfort, mode: "ranked" })).toMatchObject([{ start: at(1, 0), reasons: ["MIDNIGHT"] }]);
+  });
+
+  it("선호 시간대 안이면 생활 시간대 보정을 하지 않는다", () => {
+    // 목요일 10:00~12:00 선호
+    const preferred = preferredSlots({ days: [4], startRow: 20, endRow: 24 }, WEEK, 4);
+    const withPreferred = comfortSlots(WEEK, 4, preferred);
+    expect(rankStarts({ ...allFree, preferred, comfort: withPreferred, mode: "ranked", limit: 1 })).toEqual([
+      { start: at(0, 10), score: 105, reasons: ["PREFERRED"] },
+    ]);
+  });
+
+  it("평소 시간: 토 21:00에 자주 했으면 하루 이른 금 21:00보다 토 21:00이 먼저다 (최대 +30)", () => {
+    const free = onlyFree(WEEK, [at(1, 21), at(1, 23)], [at(2, 21), at(2, 23)]);
+    const input = { ...allFree, blocked: [free], mode: "ranked" as const, limit: 1 };
+    expect(recommendStarts(input)).toEqual([at(1, 21)]);
+    const twice = usualStartSlots([{ weekday: 6, row: 42 }, { weekday: 6, row: 42 }], WEEK, 4);
+    expect(twice).toEqual([at(2, 21), at(2, 21)]);
+    expect(rankStarts({ ...input, usualStarts: twice })).toEqual([{ start: at(2, 21), score: 5 - 2 + 20, reasons: ["USUAL_TIME"] }]);
+    // 다섯 번이어도 +30까지
+    const many = usualStartSlots(Array.from({ length: 5 }, () => ({ weekday: 6, row: 42 })), WEEK, 4);
+    expect(rankStarts({ ...input, usualStarts: many })[0].score).toBe(5 - 2 + 30);
+  });
+
+  it("ranked는 요일과 상관없이 점수순으로 겹치지 않게 고르고, spread는 요일을 섞는다", () => {
+    expect(recommendStarts({ ...allFree, comfort, mode: "ranked" })).toEqual([at(0, 18), at(0, 19), at(0, 20)]);
+    // 목 18:00(5) > 금 18:00(4) > 토 10:00(3, 주말 아침 08~10시가 지난 첫 정각)
+    expect(recommendStarts({ ...allFree, comfort, limit: 3 })).toEqual([at(0, 18), at(1, 18), at(2, 10)]);
+  });
+
+  it("이어 돌기와 겹침도 이유로 붙는다", () => {
+    const raid = range(at(0, 19), at(0, 20));
+    const free = onlyFree(WEEK, [at(0, 18), at(0, 24)]);
+    const theirs = range(at(0, 22), at(0, 23));
+    const ranked = rankStarts({ ...allFree, blocked: [[...free, ...raid]], busy: [raid], pending: theirs, mode: "ranked", limit: 6 });
+    expect(ranked[0]).toMatchObject({ start: at(0, 18), reasons: ["ADJACENT"] });
+    expect(ranked.find((option) => option.start === at(0, 22))?.reasons).toEqual(["PENDING_OVERLAP"]);
+  });
+});
+
+describe("usualStartSlots", () => {
+  it("한 달짜리 주기에서는 같은 요일마다 넣는다", () => {
+    // 1일이 일요일(7)인 30일. 지난 레이드: 일요일 20:00
+    expect(usualStartSlots([{ weekday: 7, row: 40 }], 30 * DAY, 7).map((slot) => Math.floor(slot / DAY))).toEqual([0, 7, 14, 21, 28]);
   });
 });
 

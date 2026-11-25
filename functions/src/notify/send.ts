@@ -1,6 +1,7 @@
 import type { DocumentData, DocumentSnapshot, Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
 import { getMessaging, type MulticastMessage } from "firebase-admin/messaging";
+import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { missingInputNotifications, type PartyInfo, type Push } from "./messages";
 
 /** FCM 발송부. 테스트에서 바꿔 끼울 수 있게 필요한 메서드만 받는다. */
@@ -27,11 +28,18 @@ export function toPartyInfo(snapshot: DocumentSnapshot): PartyInfo | null {
 }
 
 /**
- * 웹앱(아이폰·PC)에서 알림을 눌렀을 때 열 주소. Firebase Hosting 기본 도메인의 그 파티 화면이다.
- * 프로젝트 ID를 모르면(로컬 실행 등) undefined.
+ * 웹앱 주소. functions/.env의 WEB_APP_URL(예: https://bossplanner.web.app)을 쓰고,
+ * 없으면 Firebase Hosting 기본 도메인(https://<프로젝트 ID>.web.app). 둘 다 모르면(로컬 실행 등) undefined.
  */
-export function webPartyLink(partyId: string, projectId: string | undefined = process.env.GCLOUD_PROJECT): string | undefined {
-  return projectId ? `https://${projectId}.web.app/parties/${encodeURIComponent(partyId)}` : undefined;
+export function webAppUrl(env: Record<string, string | undefined> = process.env): string | undefined {
+  const configured = env.WEB_APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  return env.GCLOUD_PROJECT ? `https://${env.GCLOUD_PROJECT}.web.app` : undefined;
+}
+
+/** 웹앱(아이폰·PC)에서 알림을 눌렀을 때 열 그 파티 화면 주소 */
+export function webPartyLink(partyId: string, baseUrl: string | undefined = webAppUrl()): string | undefined {
+  return baseUrl ? `${baseUrl}/parties/${encodeURIComponent(partyId)}` : undefined;
 }
 
 /**
@@ -83,7 +91,9 @@ export async function runInputDeadlineCheck(db: Firestore, nowMs: number, sender
     if (!party) continue;
     const unavailable = await doc.ref.collection("unavailable").get();
     const submitted = new Set(unavailable.docs.filter((d) => d.get("submitted") === true).map((d) => d.id));
-    pushes.push(...missingInputNotifications(party, party.memberUids.filter((uid) => !submitted.has(uid))));
+    // 용병으로 대체한 사람은 입력하지 않아도 된다.
+    const active = activeMemberUids(party.memberUids, schedule.mercenaries as MercenaryLike[] | undefined);
+    pushes.push(...missingInputNotifications(party, active.filter((uid) => !submitted.has(uid))));
   }
   return sendPushes(db, pushes, sender);
 }

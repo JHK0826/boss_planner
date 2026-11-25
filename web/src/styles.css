@@ -200,9 +200,13 @@ body:has(.settlement-content) .toast-region { bottom: calc(var(--tab-height) + 8
 .boss-tile { position: relative; width: 100%; aspect-ratio: 1; border-radius: 8px; background: var(--surface-variant);
   display: flex; align-items: center; justify-content: center; padding: 2px; overflow: hidden; }
 .boss-name { font-size: 11px; line-height: 1.15; text-align: center; word-break: keep-all; color: var(--on-surface); }
-.boss-chip.cleared .boss-name { opacity: 0.45; }
-.boss-check { position: absolute; width: 30px; height: 30px; fill: var(--on-surface); filter: drop-shadow(0 0 2px var(--surface)); }
-.boss-cycle { position: absolute; top: 2px; left: 4px; font-size: 10px; font-weight: 700; color: var(--primary); }
+.boss-tile.has-image { padding: 0; }
+.boss-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.boss-chip.cleared .boss-name, .boss-chip.cleared .boss-img { opacity: 0.45; }
+/* 이미지 위에서도 보이게 반투명 어두운 원 위에 흰 체크 */
+.boss-check { position: absolute; width: 30px; height: 30px; padding: 3px; fill: #fff; background: rgba(0, 0, 0, 0.55); border-radius: 50%; }
+.boss-cycle { position: absolute; top: 2px; left: 2px; font-size: 10px; font-weight: 700; line-height: 1; color: var(--primary);
+  background: color-mix(in srgb, var(--surface) 85%, transparent); border-radius: 4px; padding: 2px 3px; }
 .difficulty { font-size: 11px; font-weight: 700; border-radius: 9px; padding: 1px 0; width: 100%; text-align: center;
   border: 1px solid transparent; }
 .d-extreme { color: #ffb4ab; border-color: #8c1d18; background: #3b0b0a; }

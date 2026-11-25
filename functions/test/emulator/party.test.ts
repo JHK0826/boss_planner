@@ -285,14 +285,15 @@ describe("이번 주기 지금 시작", () => {
     await submit(partyId, "a", []);
     await submit(partyId, "b", []);
     expect(await evaluateSchedule(db, partyId, PERIOD, FRI)).toBe("recommended");
-    // 금요일 10:00부터 수요일까지 → 금~수 6일에 하나씩
+    // 금요일 10:00부터 수요일까지 → 금~수 6일에 하나씩.
+    // 생활 시간대 보정으로 평일은 저녁 18:00, 주말은 아침(08~10시)이 지난 10:00이 뽑힌다.
     expect((await schedule(partyId))!.candidates.map((c: { slotId: string }) => c.slotId)).toEqual([
-      "20261113-1000",
-      "20261114-0000",
-      "20261115-0000",
-      "20261116-0000",
-      "20261117-0000",
-      "20261118-0000",
+      "20261113-1800",
+      "20261114-1000",
+      "20261115-1000",
+      "20261116-1800",
+      "20261117-1800",
+      "20261118-1800",
     ]);
   });
 
@@ -336,10 +337,10 @@ describe("추천 설정", () => {
   it("최소 여유 시간 안쪽은 추천하지 않는다. 기본값은 3시간이다", async () => {
     const { partyId } = await createStarted("a", partyInput("a", { minLeadMinutes: undefined }));
     expect((await db.doc(`parties/${partyId}`).get()).get("minLeadMinutes")).toBe(180);
-    await submit(partyId, "a", []);
+    // 오늘 12~15시만 가능. 12:00·12:30은 목요일 10:00 + 3시간 안쪽이다.
+    await submit(partyId, "a", allExcept("20261112", 12, 15));
     await evaluateSchedule(db, partyId, PERIOD, THU);
-    // 목요일 10:00 + 3시간
-    expect((await slotIds(partyId))[0]).toBe("20261112-1300");
+    expect(await slotIds(partyId)).toEqual(["20261112-1300", "20261112-1400"]);
   });
 
   it("여유 시간을 지키면 남는 시각이 없을 때는 여유 시간 없이 추천한다", async () => {
@@ -372,7 +373,8 @@ describe("추천 설정", () => {
     await submit(partyId, "a", []);
     await submit(partyId, "b", []);
     await evaluateSchedule(db, partyId, PERIOD, THU);
-    expect((await slotIds(partyId))[0]).toBe("20261112-1000");
+    // 목요일은 평일 낮 보정으로 저녁 18:00
+    expect((await slotIds(partyId))[0]).toBe("20261112-1800");
     const before = (await schedule(partyId))!.round;
 
     await expect(
@@ -382,8 +384,10 @@ describe("추천 설정", () => {
     await updatePartyPreferences(db, "a", { partyId, preferredWindow: WEEKEND_NIGHT, minLeadMinutes: 360 }, THU);
     const after = (await schedule(partyId))!;
     expect(after.round).toBe(before + 1);
-    // 여유 6시간 → 목요일은 16:00부터, 주말은 21:00
-    expect(await slotIds(partyId)).toEqual(expect.arrayContaining(["20261112-1600", "20261114-2100", "20261115-2100"]));
+    // 여유 6시간(16:00부터) → 목요일은 평일 낮이 끝난 18:00, 주말은 선호 시간대 21:00
+    const changed = await slotIds(partyId);
+    expect(changed).toEqual(expect.arrayContaining(["20261112-1800", "20261114-2100", "20261115-2100"]));
+    expect(changed.every((slotId: string) => slotId >= "20261112-1600")).toBe(true);
 
     // 같은 설정을 다시 저장해도 후보는 그대로다.
     await updatePartyPreferences(db, "a", { partyId, minLeadMinutes: 360 }, THU);
@@ -555,14 +559,15 @@ describe("추천과 투표", () => {
     expect(await evaluateSchedule(db, partyId, PERIOD, THU)).toBe("recommended");
 
     const result = (await schedule(partyId))!;
-    // 목·금이 막혀 토~수 5일이 가능 → 요일마다 가장 이른 정각 하나씩, 남는 한 자리는 토요일의 두 번째
+    // 목·금이 막혀 토~수 5일이 가능 → 요일마다 가장 좋은 시각(주말 10:00, 평일 18:00) 하나씩,
+    // 남는 한 자리는 가장 좋은 요일(토요일)의 두 번째
     expect(result.candidates.map((c: { slotId: string }) => c.slotId)).toEqual([
-      "20261114-0000",
-      "20261114-0100",
-      "20261115-0000",
-      "20261116-0000",
-      "20261117-0000",
-      "20261118-0000",
+      "20261114-1000",
+      "20261114-1100",
+      "20261115-1000",
+      "20261116-1800",
+      "20261117-1800",
+      "20261118-1800",
     ]);
     expect(result.candidates[0].end.toMillis() - result.candidates[0].start.toMillis()).toBe(60 * 60 * 1000);
     expect(result.round).toBe(1);
@@ -574,11 +579,12 @@ describe("추천과 투표", () => {
 
   it("불가 시간이 없어도 제출하면 입력으로 본다. 지난 시간은 추천하지 않는다", async () => {
     const partyId = await twoMemberParty();
-    await submit(partyId, "a", []);
+    // a는 오늘 09~13시만 가능, b는 불가 시간 없이 제출
+    await submit(partyId, "a", allExcept("20261112", 9, 13));
     await submit(partyId, "b", []);
     await evaluateSchedule(db, partyId, PERIOD, kst("2026-11-12T10:10:00"));
-    // 10:10 이후의 첫 정각
-    expect((await schedule(partyId))!.candidates[0].slotId).toBe("20261112-1100");
+    // 10:10 이전(09:00~10:00)은 빼고, 그 뒤의 첫 정각
+    expect((await schedule(partyId))!.candidates.map((c: { slotId: string }) => c.slotId)).toEqual(["20261112-1100", "20261112-1200"]);
   });
 
   it("다른 파티에서 확정된 시간은 불가 시간과 똑같이 뺀다", async () => {
@@ -666,7 +672,8 @@ describe("추천과 투표", () => {
     expect(await evaluateSchedule(db, partyId, PERIOD, THU)).toBe("recommended");
     const current = (await schedule(partyId))!;
     expect(current).toMatchObject({ round: 2, unanimous: [] });
-    expect(current.candidates[0].slotId).toBe("20261113-0000");
+    // 목요일이 막혀 금요일부터. 금요일은 평일이라 저녁 18:00
+    expect(current.candidates[0].slotId).toBe("20261113-1800");
 
     // 제출을 취소하면 후보가 사라진다.
     await submit(partyId, "b", day("20261112"), false);
@@ -692,7 +699,7 @@ describe("추천과 투표", () => {
     await leaveParty(db, "c", { partyId }, THU);
     const current = (await schedule(partyId))!;
     expect(current.candidates).toHaveLength(6);
-    expect(current.candidates[0].slotId).toBe("20261112-1000");
+    expect(current.candidates[0].slotId).toBe("20261112-1800");
     expect((await db.doc(`parties/${partyId}/schedules/${PERIOD}/unavailable/c`).get()).exists).toBe(false);
   });
 });

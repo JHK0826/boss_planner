@@ -4,6 +4,7 @@
  */
 
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
+import { activeMemberUids, replacedUids, type MercenaryLike } from "../domain/mercenary";
 
 export interface Push {
   uids: string[];
@@ -48,14 +49,37 @@ export function scheduleNotifications(
   after: DocumentData | undefined,
 ): Push[] {
   if (!after) return [];
-  const everyone = party.memberUids;
+  // 이번 주기 참여 파티원. 용병으로 대체한 사람에게는 그 주기 일정 알림을 보내지 않는다.
+  const everyone = activeMemberUids(party.memberUids, after.mercenaries as MercenaryLike[] | undefined);
   const push = (uids: string[], body: string): Push => ({ uids, title: party.name, body, partyId: party.id });
   const pushes: Push[] = [];
 
-  // 주기 시작
+  // 주기 시작. 이번 주 레이드가 끝나 다음 주를 미리 연 경우는 문구가 다르다.
   if (!before) {
-    if (after.state === "OPEN") pushes.push(push(everyone, "새 주기 일정 조율이 시작됐습니다. 불가 시간을 입력해 주세요."));
+    if (after.state === "OPEN") {
+      pushes.push(
+        push(
+          everyone,
+          after.preOpened === true
+            ? "이번 주 레이드가 끝났습니다. 다음 주 일정을 미리 조율할 수 있어요. 불가 시간을 입력해 주세요."
+            : "새 주기 일정 조율이 시작됐습니다. 불가 시간을 입력해 주세요.",
+        ),
+      );
+    }
     return pushes;
+  }
+
+  // 파티원이 이번 주기를 용병으로 대체함 → 다른 참여 파티원에게
+  const wasReplaced = replacedUids(before.mercenaries as MercenaryLike[] | undefined);
+  for (const uid of replacedUids(after.mercenaries as MercenaryLike[] | undefined)) {
+    if (!wasReplaced.has(uid)) pushes.push(push(everyone, `${memberName(party, uid)}님이 이번 주기를 용병으로 대체했습니다.`));
+  }
+
+  // 미리 열어 둔 다음 주 일정이 이번 주기가 됨 (목요일 00:00)
+  const unanimousNow = ((after.unanimous as unknown[] | undefined) ?? []).length > 0;
+  if (before.preOpened === true && after.preOpened !== true && isOpen(after.state)) {
+    pushes.push(push(everyone, "새 주기가 시작됐습니다. 아직 입력하지 않았다면 불가 시간을 입력해 주세요."));
+    if (unanimousNow) pushes.push(push([party.leaderUid], "전원이 동의한 시간이 있습니다. 이제 일정을 확정할 수 있습니다."));
   }
 
   const stateChanged = before.state !== after.state;
@@ -64,7 +88,16 @@ export function scheduleNotifications(
   if (stateChanged) {
     switch (after.state) {
       case "LOCKED":
-        if (confirmedAt) pushes.push(push(everyone, `일정이 확정됐습니다: ${formatKst(confirmedAt)}`));
+        if (confirmedAt) {
+          pushes.push(
+            push(
+              everyone,
+              after.confirmedBy === "AUTO"
+                ? `투표 없이 점수가 가장 높은 시간으로 정했습니다: ${formatKst(confirmedAt)}`
+                : `일정이 확정됐습니다: ${formatKst(confirmedAt)}`,
+            ),
+          );
+        }
         break;
       case "VERIFYING":
         pushes.push(push(everyone, "레이드가 끝났나요? 클리어 여부를 기록해 주세요."));
@@ -94,14 +127,33 @@ export function scheduleNotifications(
     }
   }
 
+  // 자동 지정 파티의 교체: 파티장이 다른 순위 후보로 바꿈
+  const previousSlot = before.confirmed?.slotId as string | undefined;
+  if (!stateChanged && after.state === "LOCKED" && previousSlot && after.confirmed?.slotId !== previousSlot && confirmedAt) {
+    pushes.push(push(everyone, `파티장이 일정을 바꿨습니다: ${formatKst(confirmedAt)}`));
+  }
+
   // 새 추천 후보
   const candidates = (after.candidates as unknown[] | undefined) ?? [];
-  if (isOpen(after.state) && candidates.length > 0 && before.round !== after.round) {
+  if (isOpen(after.state) && candidates.length > 0 && after.assignMode === "AUTO") {
+    // 자동 지정 예정 (미리 연 다음 주): 1위가 새로 정해지거나 바뀌면 알린다. 투표는 없다.
+    const top = (list: unknown) => ((list as { slotId?: string; start?: Timestamp }[] | undefined) ?? [])[0];
+    const next = top(after.candidates);
+    const startsAt = (after.periodStart as Timestamp | undefined)?.toMillis();
+    if (next?.start && (before.assignMode !== "AUTO" || top(before.candidates)?.slotId !== next.slotId)) {
+      const when = startsAt ? `${formatKst(startsAt)}에 ` : "";
+      pushes.push(push(everyone, `${when}점수가 가장 높은 이 시간으로 자동 확정됩니다: ${formatKst(next.start.toMillis())}`));
+    }
+  } else if (isOpen(after.state) && candidates.length > 0 && before.round !== after.round) {
     const nextRound = !stateChanged && ((before.candidates as unknown[] | undefined) ?? []).length > 0 && before.inputsKey === after.inputsKey;
     pushes.push(
       push(
         everyone,
-        nextRound ? "전원이 동의한 시간이 없어 다음 후보가 나왔습니다. 다시 투표해 주세요." : "추천 시간이 나왔습니다. 투표해 주세요.",
+        after.recommendReason === "neighbor"
+          ? "같은 파티원이 있는 다른 파티 일정이 확정되어 추천 시간을 다시 골랐습니다. 투표해 주세요."
+          : nextRound
+            ? "전원이 동의한 시간이 없어 다음 후보가 나왔습니다. 다시 투표해 주세요."
+            : "추천 시간이 나왔습니다. 투표해 주세요.",
       ),
     );
   }
@@ -110,7 +162,14 @@ export function scheduleNotifications(
   const hadUnanimous = ((before.unanimous as unknown[] | undefined) ?? []).length > 0;
   const hasUnanimous = ((after.unanimous as unknown[] | undefined) ?? []).length > 0;
   if (isOpen(after.state) && hasUnanimous && !hadUnanimous) {
-    pushes.push(push([party.leaderUid], "전원이 동의한 시간이 있습니다. 일정을 확정해 주세요."));
+    pushes.push(
+      push(
+        [party.leaderUid],
+        after.preOpened === true
+          ? "전원이 동의한 시간이 있습니다. 목요일 00:00부터 확정할 수 있어요."
+          : "전원이 동의한 시간이 있습니다. 일정을 확정해 주세요.",
+      ),
+    );
   }
 
   // 변경 요청
@@ -139,11 +198,12 @@ export function scheduleNotifications(
     const amountsOf = (value: DocumentData | undefined | null) =>
       JSON.stringify([value?.amounts ?? null, value?.amountPerPerson ?? null]);
     if (!previous || amountsOf(previous) !== amountsOf(settlement)) {
-      // 사람마다 정산금이 다를 수 있어서 한 명씩 자기 금액을 알려 준다.
+      // 사람마다 정산금이 다를 수 있어서 한 명씩 자기 금액을 알려 준다. 레이드에 참여한 사람(용병 제외)에게만.
       const seller = memberName(party, settlement.sellerUid);
-      for (const uid of everyone) {
+      const participants = (after.confirmed?.memberUids as string[] | undefined) ?? everyone;
+      for (const uid of participants) {
         if (uid === settlement.sellerUid) continue;
-        const amount = (settlement.amounts?.[uid] ?? settlement.amountPerPerson) as number | undefined;
+        const amount = (settlement.amounts ? settlement.amounts[uid] : settlement.amountPerPerson) as number | undefined;
         if (amount === undefined || amount === null) continue;
         pushes.push(
           push([uid], `${seller}님이 분배금을 등록했습니다. 내 정산금은 ${formatMeso(amount)}입니다. 채팅으로 수령 방법을 알려 주세요.`),

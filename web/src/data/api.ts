@@ -46,7 +46,7 @@ import type {
   UserProfile,
   Vote,
 } from "../lib/model";
-import { acceptsInput } from "../lib/model";
+import { acceptsInput, isReplaced } from "../lib/model";
 import { millis, toBosses, toParty, toSchedule } from "../lib/parse";
 import { type PartySnapshot, sameTargets, snapshotTargets } from "../lib/partyStatus";
 import { combineAll, constant, type Subscribe, withDetails } from "../lib/subscribe";
@@ -210,11 +210,11 @@ export const settlementEntries = (partyId: string, periodId: string): Subscribe<
 
 /**
  * 파티 목록의 상태 표시에 필요한 일정 데이터 (Android PartyRepository.partySnapshot과 같음).
- * 일정은 이번 주기와 바로 전 주기 두 개만 읽고, 불가 시간·투표·분배금 구독은 지켜볼 대상이 바뀔 때만 다시 붙인다.
+ * 일정은 최근 세 개(미리 연 다음 주, 이번 주, 지난 주)만 읽고, 불가 시간·투표·분배금 구독은 지켜볼 대상이 바뀔 때만 다시 붙인다.
  */
 export const partySnapshot = (partyId: string): Subscribe<PartySnapshot> =>
   withDetails(
-    recentSchedules(partyId, 2),
+    recentSchedules(partyId, 3),
     snapshotTargets,
     sameTargets,
     (targets) => {
@@ -271,6 +271,7 @@ export async function createParty(input: {
   characterId: string;
   preferredWindow: PreferredWindow | null;
   minLeadMinutes: number;
+  autoAssign: boolean;
 }): Promise<string> {
   const { preferredWindow, ...rest } = input;
   const result = await call<{ partyId?: string }>("createParty", preferredWindow ? { ...rest, preferredWindow } : rest);
@@ -323,12 +324,31 @@ export const requestChange = (partyId: string, periodId: string, reason: string)
 
 export const respondToChange = (partyId: string, periodId: string, approve: boolean) => call("approveChange", { partyId, periodId, approve });
 
+/** 이번 주기를 용병으로 대체한다. 이름을 비우면 "용병" */
+export const replaceWithMercenary = (partyId: string, periodId: string, name: string) =>
+  call("replaceWithMercenary", { partyId, periodId, name });
+
+/** 파티장이 이번 주기에만 쓰는 임시 용병을 추가한다. 이름을 비우면 "용병 N" */
+export const addMercenary = (partyId: string, periodId: string, name: string) => call("addMercenary", { partyId, periodId, name });
+
+/** 용병을 뺀다: 대체 용병이면 대체 취소(본인, 확정 전), 임시 용병이면 파티장이 뺀다. */
+export const removeMercenary = (partyId: string, periodId: string, mercenaryId: string) =>
+  call("removeMercenary", { partyId, periodId, mercenaryId });
+
 /** 파티장이 다음 주기를 기다리지 않고 이번 주기 일정을 지금 연다. */
 export const startSchedule = (partyId: string) => call("startSchedule", { partyId });
 
 /** 파티장이 추천 설정을 바꾼다. 선호 시간대를 없앨 때는 null을 보낸다. 조율 중이면 서버가 후보를 다시 계산한다. */
-export const updatePartyPreferences = (partyId: string, preferredWindow: PreferredWindow | null, minLeadMinutes: number) =>
-  call("updatePartyPreferences", { partyId, preferredWindow, minLeadMinutes });
+export const updatePartyPreferences = (
+  partyId: string,
+  preferredWindow: PreferredWindow | null,
+  minLeadMinutes: number,
+  autoAssign: boolean,
+) => call("updatePartyPreferences", { partyId, preferredWindow, minLeadMinutes, autoAssign });
+
+/** 투표 없이 자동으로 정한 일정을 파티장이 다른 순위 후보로 바꾼다 (레이드 4시간 전까지). */
+export const switchAssignedCandidate = (partyId: string, periodId: string, candidateIndex: number) =>
+  call("switchAssignedCandidate", { partyId, periodId, candidateIndex });
 
 export const leaveParty = (partyId: string) => call("leaveParty", { partyId });
 
@@ -355,7 +375,7 @@ export async function memberImages(p: Party): Promise<Record<string, string>> {
 
 /**
  * 같은 주기에 입력을 받고 있는 내 다른 파티에도 같은 불가 시간을 제출하고, 제출한 파티 수를 돌려준다.
- * 주기가 다른 파티(주간 ↔ 월간)나 이미 확정된 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
+ * 주기가 다른 파티(주간 ↔ 월간), 이미 확정된 파티, 그 주기를 용병으로 대체한 파티는 건너뛴다. 한 파티가 실패해도 나머지는 계속한다.
  */
 export async function submitToOtherParties(
   otherParties: Party[],
@@ -369,7 +389,7 @@ export async function submitToOtherParties(
       const schedule = await latestScheduleOnce(other.id);
       if (!schedule) continue;
       const samePeriod = schedule.periodStartMs === period.periodStartMs && schedule.periodEndMs === period.periodEndMs;
-      if (acceptsInput(schedule) && samePeriod) {
+      if (acceptsInput(schedule) && samePeriod && !isReplaced(schedule, uid)) {
         await setUnavailable(other.id, schedule.id, uid, slots, true);
         submitted++;
       }

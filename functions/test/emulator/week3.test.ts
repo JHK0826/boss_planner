@@ -189,17 +189,18 @@ describe("일정 변경 요청", () => {
   const respond = (partyId: string, uid: string, approve: boolean, now: number) =>
     approveChange(db, uid, { partyId, periodId: PERIOD, approve }, now);
 
-  it("레이드 전날 23:59까지만 요청할 수 있다", async () => {
+  it("레이드 시작 4시간 전까지만 요청할 수 있다 (토 20:00 레이드 → 토 16:00 전까지)", async () => {
     const partyId = await partyReadyToConfirm("a", ["b"]);
     await expect(request(partyId, "b", THU)).rejects.toMatchObject({ details: { reason: "not-locked" } });
     await confirm(partyId, "a");
 
     await expect(request(partyId, "c", THU)).rejects.toMatchObject({ details: { reason: "not-member" } });
-    await expect(request(partyId, "b", kst("2026-11-14T00:00:00"))).rejects.toMatchObject({
+    await expect(request(partyId, "b", kst("2026-11-14T16:00:00"))).rejects.toMatchObject({
       details: { reason: "deadline-passed" },
     });
 
-    await request(partyId, "b", kst("2026-11-13T23:59:59"));
+    // 레이드 당일이어도 4시간 전까지는 된다(예전에는 전날 23:59까지).
+    await request(partyId, "b", kst("2026-11-14T15:59:59"));
     expect((await schedule(partyId)).changeRequest).toMatchObject({ requestedBy: "b", reason: "야근", status: "PENDING" });
     await expect(request(partyId, "a", THU)).rejects.toMatchObject({ details: { reason: "already-requested" } });
   });
