@@ -400,7 +400,7 @@ try {
   step("판매자가 지급함을 누르면 받을 사람의 정산 탭에 점이 붙고, 수령을 확인하면 정산이 끝난다");
 
   // ---------- 내 캐릭터 탭: 게임 스케줄러 보스와 수익 ----------
-  // NEXON API를 부를 수 없으니 서버가 저장해 두는 스케줄러 캐시를 방금 받은 것처럼 넣는다(10분 안이면 서버가 그대로 쓴다).
+  // NEXON API를 부를 수 없으니 서버가 저장해 두는 스케줄러 캐시를 방금 받은 것처럼 넣는다(1시간 안이면 서버가 그대로 쓴다).
   await db.doc(`users/${uidA}/scheduler/${CHAR_A}`).set({
     bosses: [
       { name: "스우", difficulty: "EXTREME", cycle: "WEEKLY", cleared: true },
@@ -428,6 +428,20 @@ try {
   await card.getByLabel("스우 EX/2 클리어").waitFor();
   await shot(a, "13-characters");
   step("내 캐릭터 탭: 스케줄러에 등록한 보스를 칩으로, 클리어 체크와 파티 인원수(H/2)를 함께 보여 준다");
+
+  // 다시 열면 기기에 저장해 둔 값을 바로 보여 주고, 받은 지 1시간 안이면 서버를 부르지 않는다.
+  let schedulerCalls = 0;
+  const countSchedulerCalls = (request) => {
+    if (request.url().includes("getSchedulerState")) schedulerCalls++;
+  };
+  a.on("request", countSchedulerCalls);
+  await a.reload();
+  await card.getByLabel("스우 EX/2 클리어").waitFor();
+  await a.getByText("게임 스케줄러 ·", { exact: false }).waitFor();
+  await a.waitForTimeout(1500);
+  a.off("request", countSchedulerCalls);
+  assert.equal(schedulerCalls, 0);
+  step("내 캐릭터 탭을 다시 열면 기기에 저장한 스케줄러를 바로 보여 주고 서버를 부르지 않는다");
 
   await card.getByRole("button", { name: "수익 보기" }).click();
   await a.getByRole("heading", { name: "루시드짱 수익" }).waitFor();

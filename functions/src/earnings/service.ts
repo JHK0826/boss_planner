@@ -2,7 +2,7 @@
  * 내 캐릭터 탭: 게임 스케줄러에 등록한 보스와 수익 기록.
  *
  * - getSchedulerState: 골라 둔 캐릭터마다 스케줄러 API를 불러 등록한 주간·월간 보스와 클리어 여부를 준다.
- *   10분 동안은 저장해 둔 값을 쓴다(개발 단계 키는 하루 1,000건). 부를 때마다 이번 주·이번 달 결정석 수익을 기록한다.
+ *   1시간 동안은 저장해 둔 값을 쓴다(개발 단계 키는 하루 1,000건). 새로 받은 값이 바뀌었으면 이번 주·이번 달 결정석 수익을 기록한다.
  * - finalizeEarnings: 매일 05:00. 목요일에는 끝난 주를, 1일에는 끝난 달(월간 보스)을 전날 날짜로 다시 조회해 확정한다.
  * - recordSettlementEarnings: 분배금 등록·수령 확인 뒤 그 정산에서 사람마다 번 돈을 기록한다.
  *
@@ -33,8 +33,10 @@ import { toHttpsError } from "../nexon/errors";
 type Data = Record<string, unknown> | undefined | null;
 export type SchedulerClientFactory = (apiKey: string) => Pick<NexonClient, "getBossContents">;
 
-/** 이 시간 안에 다시 열면 NEXON을 부르지 않는다. */
-export const SCHEDULER_CACHE_MS = 10 * 60 * 1000;
+/** 이 시간 안에 다시 열면 NEXON을 부르지 않는다. 주나 달이 바뀌면(클리어 초기화) 이 시간 안이어도 다시 받는다. */
+export const SCHEDULER_CACHE_MS = 60 * 60 * 1000;
+/** 캐릭터를 동시에 이만큼까지 받는다 (NEXON 개발 키의 초당 호출 제한 안쪽) */
+const SCHEDULER_CONCURRENCY = 4;
 /** 새로고침 버튼도 이 간격보다 자주는 부르지 않는다. */
 const REFRESH_MIN_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -62,6 +64,20 @@ async function loadParties(db: Firestore, uid: string, atMs: number): Promise<Pa
       };
     }),
   );
+}
+
+/** items를 limit개씩 동시에 돌린다. 결과는 items 순서대로 */
+async function mapLimit<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await run(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** 결정석 수익 기록을 덮어쓴다. cycles에 든 기간만 쓴다. */
@@ -96,26 +112,34 @@ export async function getSchedulerState(
   makeClient: SchedulerClientFactory,
   prices: Record<string, number> = CRYSTAL_PRICES,
 ): Promise<{ characters: Record<string, CharacterScheduler> }> {
-  const [userSnap, secretSnap] = await Promise.all([db.doc(`users/${uid}`).get(), db.doc(`secrets/${uid}`).get()]);
+  const [userSnap, secretSnap, parties] = await Promise.all([
+    db.doc(`users/${uid}`).get(),
+    db.doc(`secrets/${uid}`).get(),
+    loadParties(db, uid, nowMs),
+  ]);
   const secret = secretSnap.data();
   if (!secret?.apiKey) {
     throw new HttpsError("failed-precondition", "API Key를 먼저 등록해 주세요.", { reason: "no-api-key" });
   }
   const ids = ((userSnap.get("selectedCharacterIds") as unknown[] | undefined) ?? []).filter((id): id is string => typeof id === "string").slice(0, 50);
   const maxAge = data?.refresh === true ? REFRESH_MIN_MS : SCHEDULER_CACHE_MS;
-  const parties = await loadParties(db, uid, nowMs);
-  const characters: Record<string, CharacterScheduler> = {};
+  const weekId = weekIdOf(nowMs);
+  const monthId = monthIdOf(nowMs);
 
-  for (const characterId of ids) {
+  // 캐릭터마다 캐시 읽기 → (오래됐으면) NEXON → 저장을 한다. 캐릭터 수만큼 기다리지 않게 몇 개씩 동시에 돈다.
+  const results = await mapLimit(ids, SCHEDULER_CONCURRENCY, async (characterId): Promise<CharacterScheduler> => {
     const cacheRef = db.doc(`users/${uid}/scheduler/${characterId}`);
     const cached = (await cacheRef.get()).data();
     const cachedAt = cached?.fetchedAt instanceof Timestamp ? cached.fetchedAt.toMillis() : null;
-    let bosses = (cached?.bosses as SchedulerBoss[] | undefined) ?? null;
+    const cachedBosses = (cached?.bosses as SchedulerBoss[] | undefined) ?? null;
+    let bosses = cachedBosses;
     let fetchedAtMs = cachedAt;
     let error: string | null = null;
-    let fetchedNow = false;
+    let changed = false;
 
-    if (cachedAt === null || nowMs - cachedAt >= maxAge) {
+    // 지난주·지난달에 받은 값은 클리어가 초기화됐으므로 시간과 상관없이 다시 받는다.
+    const samePeriods = cachedAt !== null && weekIdOf(cachedAt) === weekId && monthIdOf(cachedAt) === monthId;
+    if (cachedAt === null || nowMs - cachedAt >= maxAge || !samePeriods) {
       const character = (secret.characters as Record<string, SecretCharacter> | undefined)?.[characterId];
       if (!character) {
         error = "내 계정의 캐릭터가 아닙니다. 캐릭터를 다시 선택해 주세요.";
@@ -123,7 +147,8 @@ export async function getSchedulerState(
         try {
           bosses = registeredBosses(await makeClient(secret.apiKey as string).getBossContents(character.ocid));
           fetchedAtMs = nowMs;
-          fetchedNow = true;
+          // 같은 주·같은 달에 받은 값과 똑같으면 수익 기록은 이미 맞으므로 다시 쓰지 않는다.
+          changed = !samePeriods || JSON.stringify(bosses) !== JSON.stringify(cachedBosses);
           await cacheRef.set({ bosses, fetchedAt: Timestamp.fromMillis(nowMs) });
         } catch (e) {
           error = toHttpsError(e).message;
@@ -132,11 +157,12 @@ export async function getSchedulerState(
     }
 
     const priced = priceBosses(bosses ?? [], parties, uid, characterId, prices);
-    if (fetchedNow) {
-      await writeCrystalEarnings(db, uid, characterId, priced, { weekId: weekIdOf(nowMs), monthId: monthIdOf(nowMs) }, nowMs);
+    if (changed) {
+      await writeCrystalEarnings(db, uid, characterId, priced, { weekId, monthId }, nowMs);
     }
-    characters[characterId] = { bosses: priced, fetchedAtMs, error };
-  }
+    return { bosses: priced, fetchedAtMs, error };
+  });
+  const characters: Record<string, CharacterScheduler> = Object.fromEntries(ids.map((id, i) => [id, results[i]]));
   return { characters };
 }
 

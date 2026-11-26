@@ -491,7 +491,7 @@ export const confirmReceived = (partyId: string, periodId: string) => call("conf
 
 // ---------- 보스 스케줄러·수익 ----------
 
-/** 골라 둔 캐릭터마다 게임 스케줄러에 등록한 보스. 서버가 10분 동안 저장해 두고, refresh면 1분이 지났을 때 다시 받는다. */
+/** 골라 둔 캐릭터마다 게임 스케줄러에 등록한 보스. 서버가 1시간 동안 저장해 두고(주·달이 바뀌면 다시), refresh면 1분이 지났을 때 다시 받는다. */
 export async function getSchedulerState(refresh = false): Promise<Record<string, CharacterScheduler>> {
   const result = await call<{ characters?: Record<string, CharacterScheduler> }>("getSchedulerState", { refresh });
   return result.characters ?? {};

@@ -1,4 +1,4 @@
-import { Timestamp, type Firestore } from "firebase-admin/firestore";
+import { Timestamp, type DocumentData, type Firestore } from "firebase-admin/firestore";
 import type { Confirmed } from "./model";
 
 /**
@@ -10,22 +10,25 @@ export async function sweepSchedules(db: Firestore, nowMs: number): Promise<{ ve
   const result = { verifying: 0, closed: 0 };
   const active = await db.collectionGroup("schedules").where("state", "in", ["LOCKED", "OPEN", "RETRY"]).get();
 
-  for (const doc of active.docs) {
+  // 조회한 값으로 먼저 거르고, 바꿔야 하는 일정만 트랜잭션으로 다시 읽어 확인한다 (30분마다 도는 작업이라 읽기를 줄인다).
+  for (const doc of active.docs.filter((d) => change(d.data(), nowMs) !== null)) {
     await db.runTransaction(async (tx) => {
       const schedule = (await tx.get(doc.ref)).data();
-      if (!schedule) return;
-      const periodEnded = (schedule.periodEnd as Timestamp).toMillis() <= nowMs;
-      if (schedule.state === "LOCKED" && (schedule.confirmed as Confirmed).end.toMillis() <= nowMs) {
-        tx.update(doc.ref, { state: "VERIFYING", updatedAt: Timestamp.now() });
-        result.verifying++;
-      } else if (schedule.state === "OPEN" && periodEnded) {
-        tx.update(doc.ref, { state: "SKIPPED", skippedReason: "PERIOD_ENDED", updatedAt: Timestamp.now() });
-        result.closed++;
-      } else if (schedule.state === "RETRY" && periodEnded) {
-        tx.update(doc.ref, { state: "EXPIRED", expiredReason: "PERIOD_ENDED", updatedAt: Timestamp.now() });
-        result.closed++;
-      }
+      const next = schedule ? change(schedule, nowMs) : null;
+      if (!next) return;
+      tx.update(doc.ref, { ...next, updatedAt: Timestamp.now() });
+      if (next.state === "VERIFYING") result.verifying++;
+      else result.closed++;
     });
   }
   return result;
+}
+
+/** 지금 시각에 이 일정이 넘어가야 할 상태. 그대로면 null */
+function change(schedule: DocumentData, nowMs: number): DocumentData | null {
+  const periodEnded = (schedule.periodEnd as Timestamp).toMillis() <= nowMs;
+  if (schedule.state === "LOCKED" && (schedule.confirmed as Confirmed).end.toMillis() <= nowMs) return { state: "VERIFYING" };
+  if (schedule.state === "OPEN" && periodEnded) return { state: "SKIPPED", skippedReason: "PERIOD_ENDED" };
+  if (schedule.state === "RETRY" && periodEnded) return { state: "EXPIRED", expiredReason: "PERIOD_ENDED" };
+  return null;
 }

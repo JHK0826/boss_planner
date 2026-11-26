@@ -47,6 +47,8 @@ import com.bossplanner.app.data.CharacterInfo
 import com.bossplanner.app.data.Party
 import com.bossplanner.app.data.EarningsRepository
 import com.bossplanner.app.data.PartyRepository
+import com.bossplanner.app.data.SavedScheduler
+import com.bossplanner.app.data.SchedulerCache
 import com.bossplanner.app.data.UserProfile
 import com.bossplanner.app.data.UserRepository
 import com.bossplanner.app.data.userMessage
@@ -154,18 +156,29 @@ fun MainScreen(
         }
     }
 
-    // 게임 스케줄러: 내 캐릭터 탭이나 수익 화면을 처음 열 때 받는다. 서버가 10분 동안 저장해 두므로 NEXON 호출은 적다.
+    // 게임 스케줄러: 내 캐릭터 탭이나 수익 화면을 처음 열 때, 기기에 저장해 둔 값을 바로 보여 준다.
+    // 저장한 값이 1시간이 지났거나 주·달·파티 구성이 바뀌었을 때만 서버를 부른다(서버도 1시간 동안 NEXON을 다시 부르지 않는다).
     var scheduler by remember(profile.selectedCharacterIds) { mutableStateOf(SchedulerUiState()) }
     var schedulerRequest by remember(profile.selectedCharacterIds) { mutableStateOf<Boolean?>(null) }
     val wantsScheduler = (screen == null && tab == Tab.Characters) || screen is Screen.Earnings
+    val characterKey = profile.selectedCharacterIds.joinToString(",")
+    val partyKey = SchedulerCache.partyKeyOf(loadedParties?.map { it.id to it.memberUids.size })
     LaunchedEffect(wantsScheduler, profile.selectedCharacterIds) {
-        if (wantsScheduler && scheduler.characters == null && schedulerRequest == null) schedulerRequest = false
+        if (!wantsScheduler || scheduler.characters != null || schedulerRequest != null) return@LaunchedEffect
+        val saved = SchedulerCache.load(context, uid)?.takeIf { it.characterKey == characterKey }
+        if (saved != null) {
+            scheduler = SchedulerUiState(characters = saved.characters)
+            if (SchedulerCache.isFresh(saved, characterKey, partyKey, System.currentTimeMillis())) return@LaunchedEffect
+        }
+        schedulerRequest = false
     }
     LaunchedEffect(schedulerRequest) {
         val refresh = schedulerRequest ?: return@LaunchedEffect
         scheduler = scheduler.copy(loading = true)
         scheduler = try {
-            SchedulerUiState(characters = earningsRepository.schedulerState(refresh), loading = false, error = null)
+            val result = earningsRepository.schedulerState(refresh)
+            SchedulerCache.save(context, uid, SavedScheduler(System.currentTimeMillis(), characterKey, partyKey, result))
+            SchedulerUiState(characters = result, loading = false, error = null)
         } catch (e: Exception) {
             scheduler.copy(loading = false, error = e.userMessage())
         }

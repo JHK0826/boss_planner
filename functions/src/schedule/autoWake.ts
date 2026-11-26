@@ -1,4 +1,4 @@
-import type { DocumentData, Firestore, Timestamp } from "firebase-admin/firestore";
+import { Timestamp, type DocumentData, type Firestore } from "firebase-admin/firestore";
 import { currentPeriod } from "../domain/time";
 import { evaluateSchedule } from "./evaluate";
 import { otherPartiesOf } from "./pending";
@@ -37,11 +37,15 @@ export async function wakeDeferredNeighbors(db: Firestore, partyId: string, sche
  * @returns 확정을 다시 시도한 일정 수
  */
 export async function releaseStaleDeferrals(db: Firestore, nowMs: number): Promise<number> {
-  const open = await db.collectionGroup("schedules").where("state", "in", ["OPEN", "RETRY"]).get();
+  // 미룬 지 5분 넘은 일정만 조회한다(보통 0건). 일정 전부를 읽지 않도록 autoDeferredAt 컬렉션 그룹 인덱스를 쓴다.
+  const stale = await db
+    .collectionGroup("schedules")
+    .where("autoDeferredAt", "<=", Timestamp.fromMillis(nowMs - DEFER_TIMEOUT_MS))
+    .get();
   let released = 0;
-  for (const doc of open.docs) {
-    const deferredAt = (doc.get("autoDeferredAt") as Timestamp | null | undefined)?.toMillis();
-    if (deferredAt === undefined || nowMs - deferredAt < DEFER_TIMEOUT_MS) continue;
+  for (const doc of stale.docs) {
+    const state = doc.get("state") as string | undefined;
+    if (state !== "OPEN" && state !== "RETRY") continue;
     const partyId = doc.ref.parent.parent!.id;
     await evaluateSchedule(db, partyId, doc.id, nowMs, { ignorePriority: true }).catch((error) =>
       console.error("releaseStaleDeferrals failed", partyId, (error as Error).message),
