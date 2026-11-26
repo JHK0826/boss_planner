@@ -67,6 +67,7 @@ private sealed interface Screen {
     data class PartyDetail(val partyId: String, val tab: PartyTab? = null) : Screen
     data class EditUnavailable(val partyId: String, val target: UnavailableTarget) : Screen
     data object Routine : Screen
+    data object Guide : Screen
     data class Earnings(val characterId: String) : Screen
 }
 
@@ -201,7 +202,12 @@ fun MainScreen(
                         onOpenParty = { screen = Screen.PartyDetail(it) },
                         parties = partyRepository,
                     )
-                    Tab.Settings -> SettingsTab(profile = profile, onEditApiKey = onEditApiKey, onSignOut = onSignOut)
+                    Tab.Settings -> SettingsTab(
+                        profile = profile,
+                        onOpenGuide = { screen = Screen.Guide },
+                        onEditApiKey = onEditApiKey,
+                        onSignOut = onSignOut,
+                    )
                 }
             }
             // 화면 가장자리 여백은 MainActivity가 이미 주고 있어서 여기서는 더하지 않는다.
@@ -246,6 +252,7 @@ fun MainScreen(
             parties = partyRepository,
         )
         Screen.Routine -> RoutineScreen(uid = uid, onDone = { screen = null })
+        Screen.Guide -> GuideScreen(onBack = { screen = null })
         is Screen.Earnings -> EarningsScreen(
             uid = uid,
             character = characters?.firstOrNull { it.id == current.characterId },

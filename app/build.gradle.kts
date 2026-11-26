@@ -65,6 +65,13 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // 설정 탭의 사용 가이드 문구(guide/guide.json)를 웹앱과 같이 쓴다.
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(rootProject.file("guide"))
+        }
+    }
 }
 
 dependencies {

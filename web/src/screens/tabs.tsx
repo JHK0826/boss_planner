@@ -347,6 +347,9 @@ export function SettingsTab() {
         </button>
       )}
       <PushSetting uid={uid} />
+      <button className="btn-outline full" onClick={() => navigate("/settings/guide")}>
+        사용 가이드
+      </button>
       <button className="btn-outline full" onClick={() => navigate("/settings/api-key")}>
         API Key 다시 등록
       </button>

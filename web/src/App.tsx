@@ -12,6 +12,7 @@ import { AuthScreen } from "./screens/AuthScreen";
 import { CharacterSelectScreen } from "./screens/CharacterSelectScreen";
 import { CreatePartyScreen } from "./screens/CreatePartyScreen";
 import { EarningsScreen } from "./screens/EarningsScreen";
+import { GuideScreen } from "./screens/GuideScreen";
 import { JoinPartyScreen } from "./screens/JoinPartyScreen";
 import { PartyIndex, PartyScreen } from "./screens/PartyScreen";
 import { InfoTab } from "./screens/party/InfoTab";
@@ -67,6 +68,7 @@ export function App() {
         <Route path="characters/select" element={<CharacterSelectScreen uid={uid} initiallySelected={profile.selectedCharacterIds} editing />} />
         <Route path="characters/:characterId/earnings" element={<EarningsScreen />} />
         <Route path="settings/api-key" element={<ApiKeyScreen editing />} />
+        <Route path="settings/guide" element={<GuideScreen />} />
         <Route path="timetable/routine" element={<RoutineScreen />} />
         <Route path="*" element={<Navigate to="/parties" replace />} />
       </Route>
