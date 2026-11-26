@@ -95,7 +95,7 @@ describe("이번 주기 용병으로 대체", () => {
     await confirmSchedule(db, "a", { partyId, periodId: PERIOD, candidateIndex: 0 }, THU);
     expect((await data(partyId)).confirmed.memberUids).toEqual(["a", "c"]);
     expect(await busy("b")).toEqual([]);
-    expect(await busy("c")).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(await busy("c")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050"]);
   });
 
   it("확정 전에는 대체를 취소할 수 있고, 그러면 다시 그 사람 입력을 기다린다", async () => {
@@ -113,7 +113,7 @@ describe("이번 주기 용병으로 대체", () => {
   it("확정 후: 확정 시간은 그대로 두고 대체한 사람의 일정만 푼다. 취소는 안 되고, 레이드가 시작되면 대체도 안 된다", async () => {
     const partyId = await party();
     await submitVoteConfirm(partyId, ["a", "b", "c"]);
-    expect(await busy("b")).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(await busy("b")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050"]);
 
     const { mercenaryId } = await replaceWithMercenary(db, "b", args(partyId), THU);
     const locked = await data(partyId);
@@ -121,7 +121,7 @@ describe("이번 주기 용병으로 대체", () => {
     expect(locked.confirmed.memberUids).toEqual(["a", "c"]);
     expect((locked.confirmed.start as Timestamp).toMillis()).toBe(RAID);
     expect(await busy("b")).toEqual([]);
-    expect(await busy("a")).toHaveLength(2);
+    expect(await busy("a")).toHaveLength(6);
 
     await expect(removeMercenary(db, "b", args(partyId, { mercenaryId }), THU)).rejects.toMatchObject({ details: { reason: "locked" } });
     await expect(replaceWithMercenary(db, "c", args(partyId), RAID)).rejects.toMatchObject({ details: { reason: "not-editable" } });

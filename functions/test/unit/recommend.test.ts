@@ -207,11 +207,11 @@ describe("rankStarts: 생활 시간대·평소 시간·순위", () => {
     const free = onlyFree(WEEK, [at(1, 21), at(1, 23)], [at(2, 21), at(2, 23)]);
     const input = { ...allFree, blocked: [free], mode: "ranked" as const, limit: 1 };
     expect(recommendStarts(input)).toEqual([at(1, 21)]);
-    const twice = usualStartSlots([{ weekday: 6, row: 42 }, { weekday: 6, row: 42 }], WEEK, 4);
+    const twice = usualStartSlots([{ weekday: 6, minute: 21 * 60 }, { weekday: 6, minute: 21 * 60 }], WEEK, 4);
     expect(twice).toEqual([at(2, 21), at(2, 21)]);
     expect(rankStarts({ ...input, usualStarts: twice })).toEqual([{ start: at(2, 21), score: 5 - 2 + 20, reasons: ["USUAL_TIME"] }]);
     // 다섯 번이어도 +30까지
-    const many = usualStartSlots(Array.from({ length: 5 }, () => ({ weekday: 6, row: 42 })), WEEK, 4);
+    const many = usualStartSlots(Array.from({ length: 5 }, () => ({ weekday: 6, minute: 21 * 60 })), WEEK, 4);
     expect(rankStarts({ ...input, usualStarts: many })[0].score).toBe(5 - 2 + 30);
   });
 
@@ -234,7 +234,7 @@ describe("rankStarts: 생활 시간대·평소 시간·순위", () => {
 describe("usualStartSlots", () => {
   it("한 달짜리 주기에서는 같은 요일마다 넣는다", () => {
     // 1일이 일요일(7)인 30일. 지난 레이드: 일요일 20:00
-    expect(usualStartSlots([{ weekday: 7, row: 40 }], 30 * DAY, 7).map((slot) => Math.floor(slot / DAY))).toEqual([0, 7, 14, 21, 28]);
+    expect(usualStartSlots([{ weekday: 7, minute: 20 * 60 }], 30 * DAY, 7).map((slot) => Math.floor(slot / DAY))).toEqual([0, 7, 14, 21, 28]);
   });
 });
 
@@ -261,5 +261,56 @@ describe("unanimousCandidates", () => {
   it("투표하지 않은 사람이 있으면 아직 결정하지 않는다", () => {
     expect(unanimousCandidates(3, [[0], undefined])).toBeNull();
     expect(unanimousCandidates(3, [])).toBeNull();
+  });
+});
+
+describe("10분 칸: 다른 레이드에 바로 붙여 잡기", () => {
+  const U_DAY = 144;
+  /** day일째 hour시 minute분의 10분 칸 번호 */
+  const u = (day: number, hour: number, minute = 0) => day * U_DAY + hour * 6 + minute / 10;
+  const base = { totalSlots: U_DAY, durationSlots: 2, slotMinutes: 10, earliestSlot: 0 };
+  /** 하루 중 from~to시만 비어 있게 */
+  const freeHours = (from: number, to: number) => range(0, U_DAY).filter((i) => i < u(0, from) || i >= u(0, to));
+
+  it("21:00~21:20 확정 레이드 바로 뒤 21:20에 잡는다 (30분 칸처럼 21:30으로 밀지 않음)", () => {
+    const raid = [u(0, 21), u(0, 21, 10)];
+    const [first] = rankStarts({ ...base, mode: "ranked", blocked: [[...freeHours(21, 23), ...raid]], busy: [raid] });
+    expect(first.start).toBe(u(0, 21, 20));
+    expect(first.reasons).toContain("ADJACENT");
+  });
+
+  it("바로 앞에 붙는 경우: 21:40에 시작하는 레이드가 있으면 21:20에 시작한다", () => {
+    // 21:00~22:00만 비어 있고 21:40~22:00이 다른 레이드: 정각 21:00(+5)보다 바로 앞 21:20(이어 돌기)이 먼저
+    const raid = [u(0, 21, 40), u(0, 21, 50)];
+    const [first] = rankStarts({ ...base, mode: "ranked", blocked: [[...freeHours(21, 22), ...raid]], busy: [raid] });
+    expect(first.start).toBe(u(0, 21, 20));
+  });
+
+  it("붙는 레이드가 없으면 정각·30분 시작만 나온다", () => {
+    const result = rankStarts({ ...base, blocked: [[]], limit: 50 });
+    expect(result.length).toBeGreaterThan(0);
+    for (const { start } of result) expect(start % 3).toBe(0);
+  });
+
+  it("같은 날 후보끼리는 30분 넘게 떨어지고, 이미 보여 준 시각 ±20분은 빠진다", () => {
+    const raid = [u(0, 21), u(0, 21, 10)];
+    const result = rankStarts({ ...base, blocked: [[...freeHours(20, 23), ...raid]], busy: [raid] });
+    const starts = result.map((r) => r.start).sort((a, b) => a - b);
+    for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(3);
+    expect(starts).toContain(u(0, 21, 20));
+    const next = rankStarts({ ...base, mode: "ranked", blocked: [[...freeHours(20, 23), ...raid]], busy: [raid], alreadyOffered: [u(0, 21, 20)] });
+    expect(next.every((r) => Math.abs(r.start - u(0, 21, 20)) >= 3)).toBe(true);
+  });
+
+  it("생활 시간대·선호 시간대·평소 시각이 10분 칸에서도 같은 시각에 걸린다", () => {
+    const comfort = comfortSlots(U_DAY, 1, undefined, 10);
+    expect(comfort[u(0, 3)]).toBe(-60);
+    expect(comfort[u(0, 1, 50)]).toBe(-10);
+    expect(comfort[u(0, 20)]).toBe(0);
+    expect(preferredSlots({ days: [1], startRow: 42, endRow: 44 }, U_DAY, 1, 10)).toEqual(range(u(0, 21), u(0, 22)));
+    expect(usualStartSlots([{ weekday: 1, minute: 21 * 60 + 20 }], U_DAY, 1, 10)).toEqual([u(0, 21, 20)]);
+    // 평소 21:00 → 20:30~21:30 시작에 가산점
+    const usual = rankStarts({ ...base, mode: "ranked", blocked: [freeHours(20, 23)], usualStarts: [u(0, 21)], limit: 1 });
+    expect(usual[0]).toMatchObject({ start: u(0, 21), reasons: ["USUAL_TIME"] });
   });
 });

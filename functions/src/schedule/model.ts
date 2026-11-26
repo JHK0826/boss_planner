@@ -88,6 +88,11 @@ export interface Confirmed {
   end: Timestamp;
   /** 확정 당시 파티원. busy를 풀 때 쓴다. */
   memberUids: string[];
+  /**
+   * busy 문서 ID 단위(분). 0.11.2부터 10(10분마다 문서)이고, 이전 확정에는 없다(30분 칸마다 문서).
+   * busy를 지우거나 옮길 때 이 값으로 ID를 계산한다(busyIdsOf).
+   */
+  busyUnitMinutes?: number;
 }
 
 /** 추천·투표·확정을 처음부터 다시 하게 만드는 필드 값 */

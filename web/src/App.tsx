@@ -5,6 +5,7 @@ import { configured } from "./firebase";
 import { MainContext, type MainState, type PartySort } from "./main-context";
 import type { CharacterInfo, CharacterScheduler } from "./lib/model";
 import { partyStatus, type PartySnapshot } from "./lib/partyStatus";
+import { isFresh, loadSavedScheduler, partyKeyOf, saveScheduler } from "./lib/schedulerCache";
 import { combineAll } from "./lib/subscribe";
 import { useNow, usePageVisible, useSessionState, useSubscription } from "./lib/useSubscription";
 import { ApiKeyScreen } from "./screens/ApiKeyScreen";
@@ -126,25 +127,42 @@ function MainLayout({ uid, profile }: { uid: string; profile: MainState["profile
   const statuses = Object.fromEntries((parties ?? []).map((p) => [p.id, partyStatus(uid, p, snapshots[p.id], now)]));
   const todoCount = Object.values(statuses).filter((s) => s?.needsAction).length;
 
-  // 게임 스케줄러: 내 캐릭터 탭이나 수익 화면을 처음 열 때 받는다. 서버가 10분 동안 저장해 두므로 자주 불러도 NEXON 호출은 적다.
+  // 게임 스케줄러: 내 캐릭터 탭이나 수익 화면을 처음 열 때, 이 기기에 저장해 둔 값을 바로 보여 준다.
+  // 저장한 값이 1시간이 지났거나 주·달·파티 구성이 바뀌었을 때만 서버를 부른다(서버도 1시간 동안 NEXON을 다시 부르지 않는다).
   const [scheduler, setScheduler] = useState<Record<string, CharacterScheduler> | undefined>(undefined);
   const [schedulerLoading, setSchedulerLoading] = useState(false);
   const [schedulerError, setSchedulerError] = useState<string | null>(null);
   const schedulerRequested = useRef(false);
-  const loadScheduler = useCallback((refresh = false) => {
-    if (schedulerRequested.current && !refresh) return;
-    schedulerRequested.current = true;
-    setSchedulerLoading(true);
-    api.getSchedulerState(refresh).then(
-      (result) => {
-        setScheduler(result);
-        setSchedulerError(null);
-      },
-      (error) => setSchedulerError(api.userMessage(error)),
-    ).finally(() => setSchedulerLoading(false));
-  }, []);
-  // 캐릭터를 다시 고르면 새로 받는다.
+  const partyKey = useRef<string | null>(null);
+  partyKey.current = partyKeyOf(parties);
+  const loadScheduler = useCallback(
+    (refresh = false) => {
+      if (schedulerRequested.current && !refresh) return;
+      schedulerRequested.current = true;
+      if (!refresh) {
+        const saved = loadSavedScheduler(uid);
+        if (saved && saved.characterKey === selectedKey) {
+          setScheduler(saved.characters);
+          if (isFresh(saved, { characterKey: selectedKey, partyKey: partyKey.current, nowMs: Date.now() })) return;
+        }
+      }
+      setSchedulerLoading(true);
+      api.getSchedulerState(refresh).then(
+        (result) => {
+          setScheduler(result);
+          setSchedulerError(null);
+          saveScheduler(uid, { savedAt: Date.now(), characterKey: selectedKey, partyKey: partyKey.current, characters: result });
+        },
+        (error) => setSchedulerError(api.userMessage(error)),
+      ).finally(() => setSchedulerLoading(false));
+    },
+    [uid, selectedKey],
+  );
+  // 캐릭터를 다시 고르면 새로 받는다. 처음 그릴 때는 건너뛴다(내 캐릭터 탭이 먼저 불러 둔 값을 지우지 않게).
+  const lastSelectedKey = useRef(selectedKey);
   useEffect(() => {
+    if (lastSelectedKey.current === selectedKey) return;
+    lastSelectedKey.current = selectedKey;
     schedulerRequested.current = false;
     setScheduler(undefined);
   }, [selectedKey]);

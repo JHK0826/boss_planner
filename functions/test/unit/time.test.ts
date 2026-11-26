@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentPeriod, isCycleStartDay, slotIdFromMs, slotIdToMs, slotIndex } from "../../src/domain/time";
+import { currentPeriod, isCycleStartDay, slotIdFromMs, slotIdsBetween, slotIdToMs, slotIndex, unitIdsBetween, unitIdToMs } from "../../src/domain/time";
 
 const kst = (iso: string) => Date.parse(`${iso}+09:00`);
 
@@ -59,5 +59,19 @@ describe("slot", () => {
     expect(slotIndex(period, "20261118-2330")).toBe(335);
     expect(slotIndex(period, "20261119-0000")).toBeNull();
     expect(slotIndex(period, "20261111-2330")).toBeNull();
+  });
+});
+
+describe("10분 단위", () => {
+  it("구간을 덮는 10분 ID와, 걸친 30분 칸 ID", () => {
+    expect(unitIdsBetween(kst("2026-11-28T21:00:00"), kst("2026-11-28T21:20:00"))).toEqual(["20261128-2100", "20261128-2110"]);
+    expect(unitIdsBetween(kst("2026-11-28T21:20:00"), kst("2026-11-28T21:40:00"))).toEqual(["20261128-2120", "20261128-2130"]);
+    expect(slotIdsBetween(kst("2026-11-28T21:20:00"), kst("2026-11-28T21:40:00"))).toEqual(["20261128-2100", "20261128-2130"]);
+  });
+
+  it("10분 ID는 분이 10의 배수일 때만 받는다", () => {
+    expect(unitIdToMs("20261128-2120")).toBe(kst("2026-11-28T21:20:00"));
+    expect(unitIdToMs("20261128-2115")).toBeNull();
+    expect(unitIdToMs("20261131-2100")).toBeNull();
   });
 });

@@ -85,8 +85,9 @@ fun CharactersTab(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     when {
+                        fetchedAt != null ->
+                            "게임 스케줄러 · ${TimeSlots.dateTime(fetchedAt)} 기준" + if (scheduler.loading) " · 새로 받는 중…" else ""
                         scheduler.loading -> "스케줄러를 받아 오는 중…"
-                        fetchedAt != null -> "게임 스케줄러 · ${TimeSlots.dateTime(fetchedAt)} 기준"
                         else -> "게임 스케줄러"
                     },
                     style = MaterialTheme.typography.bodySmall,

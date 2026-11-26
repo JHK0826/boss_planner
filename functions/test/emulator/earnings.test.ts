@@ -84,17 +84,66 @@ describe("getSchedulerState", () => {
     expect((await earnings("a", "M-202611"))?.characters["char-a"]).toEqual({ crystalValue: 1_000_000_000, crystalCount: 1 });
   });
 
-  it("10분 안에는 저장해 둔 값을 쓰고, 새로고침은 1분이 지나야 다시 부른다", async () => {
+  it("1시간 안에는 저장해 둔 값을 쓰고, 새로고침은 1분이 지나야 다시 부른다", async () => {
     const { makeClient, getBossContents } = fakeNexon(contents);
     const t0 = kst("2026-11-14T12:00:00");
     await getSchedulerState(db, "a", {}, t0, makeClient, PRICES);
-    await getSchedulerState(db, "a", {}, t0 + 5 * 60_000, makeClient, PRICES);
+    await getSchedulerState(db, "a", {}, t0 + 59 * 60_000, makeClient, PRICES);
     await getSchedulerState(db, "a", { refresh: true }, t0 + 30_000, makeClient, PRICES);
     expect(getBossContents).toHaveBeenCalledTimes(1);
 
     await getSchedulerState(db, "a", { refresh: true }, t0 + 2 * 60_000, makeClient, PRICES);
-    await getSchedulerState(db, "a", {}, t0 + 13 * 60_000, makeClient, PRICES);
+    expect(getBossContents).toHaveBeenCalledTimes(2);
+    await getSchedulerState(db, "a", {}, t0 + 2 * 60_000 + 61 * 60_000, makeClient, PRICES);
     expect(getBossContents).toHaveBeenCalledTimes(3);
+  });
+
+  it("1시간 안이어도 주가 바뀌었으면(목요일 초기화) 다시 받는다", async () => {
+    const { makeClient, getBossContents } = fakeNexon(contents);
+    await getSchedulerState(db, "a", {}, kst("2026-11-18T23:40:00"), makeClient, PRICES);
+    await getSchedulerState(db, "a", {}, kst("2026-11-19T00:10:00"), makeClient, PRICES);
+    expect(getBossContents).toHaveBeenCalledTimes(2);
+    // 새 주 기록이 생긴다
+    expect((await earnings("a", "W-20261119"))?.characters["char-a"]).toBeDefined();
+  });
+
+  it("다시 받은 값이 같으면 수익 기록을 다시 쓰지 않는다", async () => {
+    const { makeClient } = fakeNexon(contents);
+    const t0 = kst("2026-11-14T12:00:00");
+    await getSchedulerState(db, "a", {}, t0, makeClient, PRICES);
+    const first = (await earnings("a", "W-20261112"))?.updatedAt.toMillis();
+    await getSchedulerState(db, "a", { refresh: true }, t0 + 2 * 60_000, makeClient, PRICES);
+    expect((await earnings("a", "W-20261112"))?.updatedAt.toMillis()).toBe(first);
+    // 캐시 시각은 새로 받은 시각으로
+    expect((await db.doc("users/a/scheduler/char-a").get()).get("fetchedAt").toMillis()).toBe(t0 + 2 * 60_000);
+
+    // 클리어가 바뀌면 다시 쓴다
+    const { makeClient: changed } = fakeNexon([boss("림보", "bossWeekly", true), boss("스우", "bossWeekly", true)]);
+    await getSchedulerState(db, "a", { refresh: true }, t0 + 4 * 60_000, changed, PRICES);
+    expect((await earnings("a", "W-20261112"))?.updatedAt.toMillis()).toBe(t0 + 4 * 60_000);
+  });
+
+  it("캐릭터 여러 개를 동시에 받는다 (차례로 기다리지 않음)", async () => {
+    const ids = ["char-a", "char-a2", "char-a3"];
+    await db.doc("users/a").update({ selectedCharacterIds: ids });
+    await db.doc("secrets/a").update(
+      Object.fromEntries(ids.slice(1).map((id) => [`characters.${id}`, { ocid: `ocid-${id}`, name: id, world: "스카니아", job: "비숍", level: 280 }])),
+    );
+    let running = 0;
+    let peak = 0;
+    const makeClient = () => ({
+      getBossContents: async () => {
+        running++;
+        peak = Math.max(peak, running);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        running--;
+        return contents;
+      },
+    });
+    const result = await getSchedulerState(db, "a", {}, kst("2026-11-14T12:00:00"), makeClient, PRICES);
+    expect(Object.keys(result.characters)).toEqual(ids);
+    expect(peak).toBe(3);
+    for (const id of ids) expect(result.characters[id].bosses).toHaveLength(3);
   });
 
   it("받지 못하면 저장해 둔 값과 이유를 함께 준다", async () => {

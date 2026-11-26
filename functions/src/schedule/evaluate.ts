@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { FieldPath, Timestamp, type Firestore } from "firebase-admin/firestore";
+import { FieldPath, Timestamp, type Firestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { partyCrystalValue } from "../domain/autoPriority";
 import { bossesOf } from "../domain/bosses";
 import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { comfortSlots, preferredSlots, rankStarts, unanimousCandidates, usualStartSlots } from "../domain/recommend";
-import { SLOT_MS, kstWeekday, slotIdFromMs, slotIdsBetween, slotIndex, slotMs } from "../domain/time";
+import { UNIT_MS, kstWeekday, slotIdFromMs, slotIdToMs, unitIdToMs } from "../domain/time";
 import { completedAtOf, findHigherPriorityReadyNeighbor } from "./autoNeighbors";
 import { readBusyConflicts, writeLock } from "./confirm";
 import { loadRecentRaidStarts, type RaidStart } from "./history";
@@ -117,12 +117,14 @@ function attempt(
 
     // 이번 주기에 용병으로 대체한 파티원은 입력·투표·추천에서 뺀다(용병은 시간 제약이 없다).
     const memberUids = activeMemberUids(party.memberUids as string[], schedule.mercenaries as MercenaryLike[] | undefined).sort();
+    // 추천은 10분 칸으로 계산한다. 21:00~21:20 레이드 바로 뒤를 21:20에 잡을 수 있게 하려는 것이다.
+    // totalSlots는 주기의 10분 칸 수다.
     const period = {
       startMs: (schedule.periodStart as Timestamp).toMillis(),
-      totalSlots: ((schedule.periodEnd as Timestamp).toMillis() - (schedule.periodStart as Timestamp).toMillis()) / SLOT_MS,
+      totalSlots: ((schedule.periodEnd as Timestamp).toMillis() - (schedule.periodStart as Timestamp).toMillis()) / UNIT_MS,
     };
-    const durationSlots = schedule.durationSlots as number;
-    const durationMs = ((schedule.durationMinutes as number | undefined) ?? durationSlots * 30) * 60 * 1000;
+    const durationMs = ((schedule.durationMinutes as number | undefined) ?? (schedule.durationSlots as number) * 30) * 60 * 1000;
+    const durationUnits = Math.ceil(durationMs / UNIT_MS);
     const round = (schedule.round as number) ?? 0;
     const candidates = (schedule.candidates as Candidate[]) ?? [];
 
@@ -215,29 +217,54 @@ function attempt(
         ),
       ),
     );
-    const toIndexes = (slotIds: string[]) =>
-      slotIds.map((id) => slotIndex(period, id)).filter((index): index is number => index !== null);
-    const busy = busySnaps.map((snap) => toIndexes(snap.docs.map((doc) => doc.id)));
+    const inPeriod = (index: number) => Number.isInteger(index) && index >= 0 && index < period.totalSlots;
+    const unitOf = (ms: number) => (ms - period.startMs) / UNIT_MS;
+    // 불가 시간은 30분 칸이라 10분 칸 3개로 편다.
+    const unavailableUnits = (slotIds: string[]) =>
+      slotIds.flatMap((id) => {
+        const ms = slotIdToMs(id);
+        if (ms === null) return [];
+        const first = unitOf(ms);
+        return [first, first + 1, first + 2].filter(inPeriod);
+      });
+    // 후보 시작 칸 ID(10분 단위)
+    const startUnits = (ids: string[]) =>
+      ids.map((id) => unitIdToMs(id)).flatMap((ms) => (ms === null ? [] : [unitOf(ms)])).filter(inPeriod);
+    // busy는 문서 ID가 아니라 남은 레이드 시간으로 칸을 구한다(0.11.2 전 확정은 30분 칸마다 문서라 ID로는 알 수 없다).
+    const raidUnits = (docs: QueryDocumentSnapshot[]) => {
+      const units = new Set<number>();
+      for (const doc of docs) {
+        let start = (doc.get("start") as Timestamp | undefined)?.toMillis();
+        let end = (doc.get("end") as Timestamp | undefined)?.toMillis();
+        if (start === undefined || end === undefined) {
+          // 시간이 없는 문서는 ID의 칸을 막는다(정각·30분이면 30분 칸, 아니면 10분).
+          const at = unitIdToMs(doc.id);
+          if (at === null) continue;
+          start = at;
+          end = at + (slotIdToMs(doc.id) === null ? UNIT_MS : 3 * UNIT_MS);
+        }
+        for (let index = Math.floor(unitOf(start)); index < Math.ceil(unitOf(end)); index++) if (inPeriod(index)) units.add(index);
+      }
+      return [...units];
+    };
+    const busy = busySnaps.map((snap) => raidUnits(snap.docs));
     // busy 중 이 파티와 같은 캐릭터로 잡힌 레이드 (예전 busy에는 characterId가 없어 다른 캐릭터로 본다)
     const busySameCharacter = busySnaps.map((snap, i) =>
-      toIndexes(
-        snap.docs
-          .filter((doc) => !!memberCharacterIds[i] && doc.get("characterId") === memberCharacterIds[i])
-          .map((doc) => doc.id),
-      ),
+      raidUnits(snap.docs.filter((doc) => !!memberCharacterIds[i] && doc.get("characterId") === memberCharacterIds[i])),
     );
-    const blocked = memberUids.map((uid, i) => [...toIndexes(slotsOf(uid)), ...busy[i]]);
+    const blocked = memberUids.map((uid, i) => [...unavailableUnits(slotsOf(uid)), ...busy[i]]);
 
     // 생활 시간대 보정과 평소 레이드 시각 (선호 시간대 안은 보정하지 않는다)
     const firstWeekday = kstWeekday(period.startMs);
-    const preferred = preferredWindow ? preferredSlots(preferredWindow, period.totalSlots, firstWeekday) : undefined;
-    const comfort = comfortSlots(period.totalSlots, firstWeekday, preferred);
-    const usualStarts = usualStartSlots(usual, period.totalSlots, firstWeekday);
+    const preferred = preferredWindow ? preferredSlots(preferredWindow, period.totalSlots, firstWeekday, 10) : undefined;
+    const comfort = comfortSlots(period.totalSlots, firstWeekday, preferred, 10);
+    const usualStarts = usualStartSlots(usual, period.totalSlots, firstWeekday, 10);
 
     const recommend = (leadMinutes: number) =>
       rankStarts({
         totalSlots: period.totalSlots,
-        durationSlots,
+        durationSlots: durationUnits,
+        slotMinutes: 10,
         blocked,
         busy,
         busySameCharacter,
@@ -249,8 +276,8 @@ function attempt(
         usualStarts,
         // 자동 지정은 요일과 상관없이 점수순, 투표는 요일을 섞는다.
         mode: autoAssign ? "ranked" : "spread",
-        earliestSlot: Math.ceil((nowMs + leadMinutes * 60 * 1000 - period.startMs) / SLOT_MS),
-        alreadyOffered: autoAssign ? [] : toIndexes(alreadyOffered),
+        earliestSlot: Math.ceil((nowMs + leadMinutes * 60 * 1000 - period.startMs) / UNIT_MS),
+        alreadyOffered: autoAssign ? [] : startUnits(alreadyOffered),
       });
     // 최소 여유 시간을 지키면 남는 시각이 없을 때는(주기 막바지 등) 여유 시간 없이 다시 찾는다.
     let ranked = recommend(minLeadMinutes);
@@ -274,10 +301,11 @@ function attempt(
       return "skipped";
     }
 
+    const startMsOf = (index: number) => period.startMs + index * UNIT_MS;
     const next: Candidate[] = ranked.map(({ start, score, reasons }) => ({
-      slotId: slotIdFromMs(slotMs(period, start)),
-      start: Timestamp.fromMillis(slotMs(period, start)),
-      end: Timestamp.fromMillis(slotMs(period, start) + durationMs),
+      slotId: slotIdFromMs(startMsOf(start)),
+      start: Timestamp.fromMillis(startMsOf(start)),
+      end: Timestamp.fromMillis(startMsOf(start) + durationMs),
       score,
       reasons,
     }));
@@ -316,8 +344,7 @@ function attempt(
       // 1위부터 차례로, 그 시간 칸에 다른 레이드가 없는 첫 후보로 이 트랜잭션에서 확정한다.
       // 위에서 busy를 같은 트랜잭션으로 읽어 뺐으므로 보통 1위가 바로 확정된다.
       for (const candidate of next) {
-        const slotIds = slotIdsBetween(candidate.start.toMillis(), candidate.end.toMillis());
-        if ((await readBusyConflicts(tx, db, memberUids, slotIds)).length > 0) continue;
+        if ((await readBusyConflicts(tx, db, memberUids, candidate.start.toMillis(), candidate.end.toMillis())).length > 0) continue;
         writeLock(tx, db, { party, partyId, periodId, scheduleRef, candidate, memberUids, confirmedBy: "AUTO", extra: update });
         return "auto-confirmed";
       }

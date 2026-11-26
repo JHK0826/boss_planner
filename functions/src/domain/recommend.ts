@@ -18,12 +18,15 @@
  *      − 파티원이 겹치는 다른 파티가 투표 중인 후보와 겹침 (나중에 한쪽이 거절당해 다시 투표하게 됨)
  *      + 정각에 시작
  *      + 주기 앞쪽 날짜 (미클리어 때 다시 잡을 여유가 남음)
+ * 칸 크기(slotMinutes)는 기본 30분이고, 일정 계산(evaluate)은 10분으로 부른다. 10분일 때 시작 시각은
+ * 정각·30분이거나, 파티원의 다른 레이드(확정·투표 중 후보)에 바로 붙는 시각(예: 21:00~21:20 뒤 21:20)만 쓴다.
  * 3. 고르는 방식
  *      spread (투표): 요일마다 가장 좋은 시각을 하나씩 고르고, 자리가 남으면 요일마다 두 번째, 세 번째를 채운다.
  *                     같은 날의 후보끼리는 시간이 겹치지 않는다. 결과는 시간순.
  *      ranked (자동 지정): 요일과 상관없이 점수순으로, 서로 겹치지 않게 고른다. 결과는 순위순.
  */
 
+/** 하루의 30분 칸 수 */
 export const SLOTS_PER_DAY = 48;
 export const MAX_CANDIDATES = 6;
 /** 자동 지정에서 보여 줄 순위 후보 수 (1위로 확정하고, 파티장은 나머지로 바꿀 수 있다) */
@@ -96,6 +99,11 @@ export interface RecommendInput {
   mode?: "spread" | "ranked";
   /** 최대 후보 수. 기본은 spread 6개, ranked 3개 */
   limit?: number;
+  /**
+   * 칸 크기(분). 30(기본) 또는 10. 10이면 정각·30분이 아닌 시작은 다른 레이드에 바로 붙을 때만 쓰고,
+   * 같은 날 후보끼리와 이미 보여 준 시각과는 30분 넘게 떨어뜨린다.
+   */
+  slotMinutes?: number;
 }
 
 export interface RankedStart {
@@ -110,6 +118,9 @@ export interface RankedStart {
  */
 export function rankStarts(input: RecommendInput): RankedStart[] {
   const { totalSlots, durationSlots } = input;
+  // 30분이 몇 칸인가 (30분 칸이면 1, 10분 칸이면 3)
+  const per30 = 30 / (input.slotMinutes ?? 30);
+  const slotsPerDay = SLOTS_PER_DAY * per30;
   const mode = input.mode ?? "spread";
   const limit = input.limit ?? (mode === "ranked" ? RANKED_CANDIDATES : MAX_CANDIDATES);
   if (durationSlots <= 0 || totalSlots <= 0 || limit <= 0) return [];
@@ -120,7 +131,7 @@ export function rankStarts(input: RecommendInput): RankedStart[] {
       if (Number.isInteger(index) && index >= 0 && index < totalSlots) free[index] = false;
     }
   }
-  const offered = new Set(input.alreadyOffered ?? []);
+  const offered = [...new Set(input.alreadyOffered ?? [])];
   const busy = (input.busy ?? []).map((member) => new Set(member));
   const pending = new Set(input.pending ?? []);
   const pendingByMember = (input.pendingByMember ?? []).map((member) => new Set(member));
@@ -132,11 +143,19 @@ export function rankStarts(input: RecommendInput): RankedStart[] {
   const usual = new Map<number, number>();
   for (const index of input.usualStarts ?? []) usual.set(index, (usual.get(index) ?? 0) + 1);
 
+  // 파티원 누구든 다른 레이드(확정·투표 중 후보)가 차지한 칸. 10분 칸에서 정각·30분이 아닌 시작은 여기에 바로 붙을 때만 쓴다.
+  const anyRaid = new Set<number>();
+  for (const member of [...busy, ...pendingByMember]) for (const index of member) anyRaid.add(index);
+  const usableStart = (start: number) =>
+    start % per30 === 0 || anyRaid.has(start - 1) || anyRaid.has(start + durationSlots);
+  // 이미 보여 준 시각과 30분 안쪽이면 다시 내지 않는다 (30분 칸이면 같은 칸만)
+  const wasOffered = (start: number) => offered.some((index) => Math.abs(index - start) < per30);
+
   const evaluate = (start: number): RankedStart => {
     const slots = Array.from({ length: durationSlots }, (_, i) => start + i);
     const reasons: ReasonCode[] = [];
-    let total = SCORE_PER_DAY * Math.floor(start / SLOTS_PER_DAY);
-    if (start % 2 === 0) total += SCORE_ON_THE_HOUR;
+    let total = SCORE_PER_DAY * Math.floor(start / slotsPerDay);
+    if (start % (2 * per30) === 0) total += SCORE_ON_THE_HOUR;
     if (preferred && slots.every((slot) => preferred.has(slot))) {
       total += SCORE_PREFERRED;
       reasons.push("PREFERRED");
@@ -165,7 +184,8 @@ export function rankStarts(input: RecommendInput): RankedStart[] {
     else if (best > 0) reasons.push("ADJACENT_PENDING");
 
     // 평소 레이드 시각: 시작이 ±30분 안인 지난 레이드마다
-    const usualCount = (usual.get(start - 1) ?? 0) + (usual.get(start) ?? 0) + (usual.get(start + 1) ?? 0);
+    let usualCount = 0;
+    for (let offset = -per30; offset <= per30; offset++) usualCount += usual.get(start + offset) ?? 0;
     if (usualCount > 0) {
       total += Math.min(usualCount * SCORE_USUAL_PER_RAID, SCORE_USUAL_MAX);
       reasons.push("USUAL_TIME");
@@ -192,10 +212,11 @@ export function rankStarts(input: RecommendInput): RankedStart[] {
   let run = 0;
   for (let i = totalSlots - 1; i >= 0; i--) {
     run = free[i] ? run + 1 : 0;
-    if (run >= durationSlots && i >= Math.max(input.earliestSlot, 0) && !offered.has(i)) options.push(evaluate(i));
+    if (run >= durationSlots && i >= Math.max(input.earliestSlot, 0) && usableStart(i) && !wasOffered(i)) options.push(evaluate(i));
   }
   const byScore = (a: RankedStart, b: RankedStart) => b.score - a.score || a.start - b.start;
-  const apart = (a: RankedStart, b: RankedStart) => Math.abs(a.start - b.start) >= durationSlots;
+  // 같은 날 후보끼리는 겹치지 않고, 10분 칸이어도 30분 넘게 떨어진다.
+  const apart = (a: RankedStart, b: RankedStart) => Math.abs(a.start - b.start) >= Math.max(durationSlots, per30);
 
   if (mode === "ranked") {
     const picks: RankedStart[] = [];
@@ -209,7 +230,7 @@ export function rankStarts(input: RecommendInput): RankedStart[] {
   // spread: 요일 안에서 점수 높은 것부터, 앞서 고른 것과 겹치지 않게 차례로 고른다.
   const byDay = new Map<number, RankedStart[]>();
   for (const option of options) {
-    const day = Math.floor(option.start / SLOTS_PER_DAY);
+    const day = Math.floor(option.start / slotsPerDay);
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day)!.push(option);
   }
@@ -250,11 +271,15 @@ export function preferredSlots(
   window: { days: number[]; startRow: number; endRow: number },
   totalSlots: number,
   firstWeekday: number,
+  slotMinutes = 30,
 ): number[] {
+  // 선호 시간대의 행(startRow·endRow)은 30분 칸 기준이다.
+  const per30 = 30 / slotMinutes;
+  const perDay = SLOTS_PER_DAY * per30;
   const slots: number[] = [];
-  for (let day = 0; day * SLOTS_PER_DAY < totalSlots; day++) {
+  for (let day = 0; day * perDay < totalSlots; day++) {
     if (!window.days.includes(weekdayOf(firstWeekday, day))) continue;
-    for (let row = window.startRow; row < window.endRow; row++) slots.push(day * SLOTS_PER_DAY + row);
+    for (let row = window.startRow * per30; row < window.endRow * per30; row++) slots.push(day * perDay + row);
   }
   return slots;
 }
@@ -267,14 +292,17 @@ export function preferredSlots(
  * - 그 밖(평일 18~24시, 주말 10~24시) 0
  * @param firstWeekday 주기 첫날의 요일: 1(월) ~ 7(일)
  */
-export function comfortSlots(totalSlots: number, firstWeekday: number, preferred?: Iterable<number>): number[] {
+export function comfortSlots(totalSlots: number, firstWeekday: number, preferred?: Iterable<number>, slotMinutes = 30): number[] {
   const inPreferred = new Set(preferred ?? []);
-  const within = (row: number, [from, to]: readonly [number, number]) => row >= from && row < to;
+  const per30 = 30 / slotMinutes;
+  const perDay = SLOTS_PER_DAY * per30;
+  // 구간은 30분 칸 기준이라 칸 크기에 맞춰 늘린다.
+  const within = (row: number, [from, to]: readonly [number, number]) => row >= from * per30 && row < to * per30;
   const result = new Array<number>(Math.max(totalSlots, 0)).fill(0);
   for (let index = 0; index < totalSlots; index++) {
     if (inPreferred.has(index)) continue;
-    const row = index % SLOTS_PER_DAY;
-    const weekend = weekdayOf(firstWeekday, Math.floor(index / SLOTS_PER_DAY)) >= 6;
+    const row = index % perDay;
+    const weekend = weekdayOf(firstWeekday, Math.floor(index / perDay)) >= 6;
     if (within(row, LATE_NIGHT_ROWS)) result[index] = COMFORT_LATE_NIGHT;
     else if (within(row, MIDNIGHT_ROWS)) result[index] = COMFORT_MIDNIGHT;
     else if (within(row, weekend ? WEEKEND_MORNING_ROWS : WEEKDAY_DAYTIME_ROWS)) result[index] = COMFORT_DAYTIME;
@@ -283,19 +311,21 @@ export function comfortSlots(totalSlots: number, firstWeekday: number, preferred
 }
 
 /**
- * 지난 레이드 시작 시각(요일·하루 안의 칸)을 이 주기의 같은 요일·칸 번호로 옮긴다.
+ * 지난 레이드 시작 시각(요일·하루 안의 분)을 이 주기의 같은 요일·칸 번호로 옮긴다.
  * 월간 주기처럼 같은 요일이 여러 번 있으면 모두 넣는다.
  */
 export function usualStartSlots(
-  past: readonly { weekday: number; row: number }[],
+  past: readonly { weekday: number; minute: number }[],
   totalSlots: number,
   firstWeekday: number,
+  slotMinutes = 30,
 ): number[] {
+  const perDay = SLOTS_PER_DAY * (30 / slotMinutes);
   const slots: number[] = [];
-  for (let day = 0; day * SLOTS_PER_DAY < totalSlots; day++) {
+  for (let day = 0; day * perDay < totalSlots; day++) {
     const weekday = weekdayOf(firstWeekday, day);
     for (const raid of past) {
-      const index = day * SLOTS_PER_DAY + raid.row;
+      const index = day * perDay + Math.floor(raid.minute / slotMinutes);
       if (raid.weekday === weekday && index < totalSlots) slots.push(index);
     }
   }

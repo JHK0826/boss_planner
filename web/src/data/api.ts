@@ -237,7 +237,7 @@ export const partySnapshot = (partyId: string): Subscribe<PartySnapshot> =>
   );
 
 /**
- * fromMs 이후의 내 확정 일정. busy는 30분 칸마다 문서가 하나씩 있어서 같은 레이드의 칸을 하나로 묶는다.
+ * fromMs 이후의 내 확정 일정. busy는 10분마다(0.11.2 전 확정은 30분 칸마다) 문서가 하나씩 있어서 같은 레이드의 문서를 하나로 묶는다.
  */
 export const myRaids = (uid: string, fromMs: number): Subscribe<Raid[]> =>
   listen(query(collection(db, "users", uid, "busy"), orderBy(documentId()), startAt(slotId(fromMs))), [], (snapshot) => {
@@ -491,7 +491,7 @@ export const confirmReceived = (partyId: string, periodId: string) => call("conf
 
 // ---------- 보스 스케줄러·수익 ----------
 
-/** 골라 둔 캐릭터마다 게임 스케줄러에 등록한 보스. 서버가 10분 동안 저장해 두고, refresh면 1분이 지났을 때 다시 받는다. */
+/** 골라 둔 캐릭터마다 게임 스케줄러에 등록한 보스. 서버가 1시간 동안 저장해 두고(주·달이 바뀌면 다시), refresh면 1분이 지났을 때 다시 받는다. */
 export async function getSchedulerState(refresh = false): Promise<Record<string, CharacterScheduler>> {
   const result = await call<{ characters?: Record<string, CharacterScheduler> }>("getSchedulerState", { refresh });
   return result.characters ?? {};

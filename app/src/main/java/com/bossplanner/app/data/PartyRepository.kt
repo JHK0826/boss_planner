@@ -284,7 +284,7 @@ class PartyRepository(
 
     /**
      * fromMs 이후의 내 확정 일정. 여러 파티의 일정을 시간순으로 모은다.
-     * busy는 30분 칸마다 문서가 하나씩 있어서, 같은 레이드의 칸을 하나로 묶는다.
+     * busy는 10분마다(0.11.2 전 확정은 30분 칸마다) 문서가 하나씩 있어서, 같은 레이드의 문서를 하나로 묶는다.
      */
     fun myRaids(uid: String, fromMs: Long): Flow<List<Raid>> =
         db.collection("users").document(uid).collection("busy")

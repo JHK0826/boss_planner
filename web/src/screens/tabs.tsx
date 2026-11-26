@@ -17,7 +17,7 @@ import { Loading, useTheme, useToast } from "../ui/common";
 export function CharactersTab() {
   const { characters, scheduler, schedulerLoading, schedulerError, loadScheduler } = useMain();
   const navigate = useNavigate();
-  // 처음 열 때 게임 스케줄러를 받는다(서버가 10분 동안 저장해 둔다).
+  // 처음 열 때 게임 스케줄러를 보여 준다. 기기에 저장해 둔 값이 1시간 안이면 서버를 부르지 않는다.
   useEffect(() => loadScheduler(), [loadScheduler]);
   const fetchedTimes = Object.values(scheduler ?? {}).flatMap((s) => (s.fetchedAtMs ? [s.fetchedAtMs] : []));
   const fetchedAt = fetchedTimes.length > 0 ? Math.min(...fetchedTimes) : null;
@@ -27,7 +27,11 @@ export function CharactersTab() {
       <h1>내 캐릭터</h1>
       <div className="row">
         <span className="small muted grow">
-          {schedulerLoading ? "스케줄러를 받아 오는 중…" : fetchedAt ? `게임 스케줄러 · ${dateTime(fetchedAt)} 기준` : "게임 스케줄러"}
+          {fetchedAt
+            ? `게임 스케줄러 · ${dateTime(fetchedAt)} 기준${schedulerLoading ? " · 새로 받는 중…" : ""}`
+            : schedulerLoading
+              ? "스케줄러를 받아 오는 중…"
+              : "게임 스케줄러"}
         </span>
         <button className="btn-text" disabled={schedulerLoading} onClick={() => loadScheduler(true)}>
           새로고침

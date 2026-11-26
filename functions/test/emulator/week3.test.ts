@@ -110,8 +110,8 @@ describe("confirmSchedule", () => {
     const locked = await schedule(partyId);
     expect(locked.state).toBe("LOCKED");
     expect(locked.confirmed).toMatchObject({ slotId: "20261114-2000", memberUids: ["a", "b"] });
-    expect(await busyIds("a")).toEqual(["20261114-2000", "20261114-2030"]);
-    expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(await busyIds("a")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050"]);
+    expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050"]);
     expect((await db.doc("users/b/busy/20261114-2000").get()).data()).toMatchObject({
       partyId,
       partyName: "스우팟",
@@ -158,7 +158,7 @@ describe("confirmSchedule", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const states = [(await schedule(first)).state, (await schedule(second)).state].sort();
     expect(states).toEqual(["LOCKED", "OPEN"]);
-    expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050"]);
   });
 
   it("다른 파티가 확정한 뒤에 계산한 추천에서는 그 시간이 빠진다", async () => {
@@ -171,7 +171,7 @@ describe("confirmSchedule", () => {
       "20261114-2200",
     ]);
     await confirm(second, "c");
-    expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2030", "20261114-2100", "20261114-2130"]);
+    expect(await busyIds("b")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050", "20261114-2100", "20261114-2110", "20261114-2120", "20261114-2130", "20261114-2140", "20261114-2150"]);
   });
 
   it("확정된 뒤에는 목요일이어도 탈퇴할 수 없다", async () => {
@@ -374,7 +374,7 @@ describe("runDailyClearCheck", () => {
     const partial = await partyReadyToConfirm("a", ["b"], [["20261114", 20, 21], ["20261116", 20, 21]], "묶음", bundle, 40);
     await confirm(partial, "a");
     expect((await schedule(partial)).confirmed.end.toMillis()).toBe(kst("2026-11-14T20:40:00"));
-    expect(await busyIds("a")).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(await busyIds("a")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030"]);
 
     const one = fakeNexon({ "key-a": contents(false), "key-b": contents(false) });
     expect(await runDailyClearCheck(db, kst("2026-11-15T05:00:00"), one.makeClient)).toMatchObject({ retry: 1 });

@@ -12,9 +12,8 @@ import {
   replacedUids,
   type MercenaryLike,
 } from "../domain/mercenary";
-import { slotIdsBetween } from "../domain/time";
 import { MAX_PARTY_SIZE } from "../party/service";
-import { requireString } from "./confirm";
+import { busyIdsOf, requireString } from "./confirm";
 import { evaluateSchedule } from "./evaluate";
 import type { Confirmed } from "./model";
 
@@ -84,8 +83,8 @@ export async function replaceWithMercenary(db: Firestore, uid: string, data: Dat
     if (isLocked) {
       // 확정 시간은 그대로, 대체한 사람의 일정만 풀어 다른 파티에서 그 시간을 쓸 수 있게 한다.
       const confirmed = schedule.confirmed as Confirmed;
-      for (const slotId of slotIdsBetween(confirmed.start.toMillis(), confirmed.end.toMillis())) {
-        tx.delete(db.doc(`users/${uid}/busy/${slotId}`));
+      for (const id of busyIdsOf(confirmed)) {
+        tx.delete(db.doc(`users/${uid}/busy/${id}`));
       }
       update["confirmed.memberUids"] = confirmed.memberUids.filter((member) => member !== uid);
     }

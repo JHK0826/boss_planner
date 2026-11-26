@@ -1,13 +1,13 @@
 import type { Firestore, Timestamp } from "firebase-admin/firestore";
-import { SLOT_MS, kstWeekday, startOfKstDay } from "../domain/time";
+import { kstWeekday, startOfKstDay } from "../domain/time";
 
 /** 평소 시간 학습에 쓰는 최근 레이드 수 */
 export const USUAL_RAID_COUNT = 8;
 
-/** 지난 레이드의 시작: KST 요일(1=월 ~ 7=일)과 하루 안의 30분 칸 */
+/** 지난 레이드의 시작: KST 요일(1=월 ~ 7=일)과 하루 안의 분(21:20 → 1280) */
 export interface RaidStart {
   weekday: number;
-  row: number;
+  minute: number;
 }
 
 /**
@@ -26,7 +26,7 @@ export async function loadRecentRaidStarts(db: Firestore, partyId: string, excep
     if (doc.id === exceptPeriodId) continue;
     const startMs = (doc.get("confirmed.start") as Timestamp | undefined)?.toMillis();
     if (startMs === undefined) continue;
-    starts.push({ weekday: kstWeekday(startMs), row: Math.floor((startMs - startOfKstDay(startMs)) / SLOT_MS) });
+    starts.push({ weekday: kstWeekday(startMs), minute: Math.floor((startMs - startOfKstDay(startMs)) / 60_000) });
     if (starts.length >= USUAL_RAID_COUNT) break;
   }
   return starts;
