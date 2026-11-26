@@ -279,7 +279,7 @@ fun PartiesTab(
 
 /** 설정: 계정, API Key 재등록, 로그아웃, 앱 버전 */
 @Composable
-fun SettingsTab(profile: UserProfile, onEditApiKey: () -> Unit, onSignOut: () -> Unit) {
+fun SettingsTab(profile: UserProfile, onOpenGuide: () -> Unit, onEditApiKey: () -> Unit, onSignOut: () -> Unit) {
     val context = LocalContext.current
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
@@ -311,6 +311,7 @@ fun SettingsTab(profile: UserProfile, onEditApiKey: () -> Unit, onSignOut: () ->
         if (!theme.followsSystem) {
             TextButton(onClick = { theme.onChange(null) }) { Text("휴대폰 설정 따르기") }
         }
+        OutlinedButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) { Text("사용 가이드") }
         OutlinedButton(onClick = onEditApiKey, modifier = Modifier.fillMaxWidth()) { Text("API Key 다시 등록") }
         OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("로그아웃") }
         // 파티원끼리 같은 버전을 쓰는지 확인할 수 있게 보여 준다.

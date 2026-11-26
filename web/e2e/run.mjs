@@ -219,6 +219,24 @@ try {
   await a.getByText("할 일 · 불가 시간 입력").waitFor();
   step("다크 모드를 켜면 바로 바뀌고 새로고침해도 유지된다");
 
+  // ---------- 사용 가이드 ----------
+  await a.getByRole("link", { name: "설정" }).click();
+  await a.getByRole("button", { name: "사용 가이드" }).click();
+  await a.getByRole("heading", { name: "사용 가이드" }).waitFor();
+  for (const title of ["기본 사용 흐름", "기능별 설명", "자주 묻는 질문"]) await a.getByRole("heading", { name: title }).waitFor();
+  // 첫 항목은 펴져 있고, 다른 항목은 눌러야 본문이 보인다
+  await a.getByText("이메일로 가입한 뒤 NEXON Open API Key를 등록하고", { exact: false }).waitFor();
+  const faqBody = a.getByText("파티원 전원이 불가 시간을 제출해야 추천이 나옵니다", { exact: false });
+  assert.equal(await faqBody.isVisible(), false);
+  await a.getByText("추천 시간이 안 나와요").click();
+  await faqBody.waitFor();
+  await shot(a, "06b-guide");
+  await a.getByRole("button", { name: "← 설정" }).click();
+  await a.getByRole("heading", { name: "설정" }).waitFor();
+  await a.getByRole("link", { name: "파티" }).click();
+  await a.getByText("할 일 · 불가 시간 입력").waitFor();
+  step("설정 탭의 사용 가이드: 세 묶음이 보이고, 항목을 누르면 펴지고, 설정으로 돌아간다");
+
   // ---------- 불가 시간 제출 (고정 불가 시간으로 미리 채워짐) ----------
   await a.getByText("스우팟").click();
   // 투표 탭에 할 일이 있으면 투표 탭부터 연다.

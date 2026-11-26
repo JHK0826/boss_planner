@@ -192,6 +192,18 @@ body:has(.tabs) .toast-region { bottom: calc(var(--tab-height) + 16px + var(--sa
 .legend i.dot { border-radius: 50%; }
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
 
+/* 사용 가이드: 주제별로 접었다 펴는 카드 */
+.guide-item { background: var(--surface-container); border-radius: var(--radius); }
+.guide-item summary { list-style: none; cursor: pointer; padding: 14px 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.guide-item summary::-webkit-details-marker { display: none; }
+.guide-item summary::before { content: ""; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--on-surface-variant);
+  border-bottom: 2px solid var(--on-surface-variant); transform: rotate(-45deg); transition: transform 0.15s; }
+.guide-item[open] summary::before { transform: rotate(45deg); }
+.guide-body { padding: 0 16px 14px 31px; font-size: 14px; color: var(--on-surface-variant); }
+.guide-body p { margin: 0 0 6px; }
+.guide-body ul { margin: 0 0 6px; padding-left: 18px; }
+.guide-body li + li { margin-top: 4px; }
+
 /* 시간표 탭: 요일이 줄, 가로축이 시각인 확정 일정 타임라인 */
 .timeline { display: grid; grid-template-columns: 40px minmax(0, 1fr); row-gap: 4px; font-size: 11px; }
 .timeline-ticks { position: relative; height: 16px; color: var(--on-surface-variant); }
