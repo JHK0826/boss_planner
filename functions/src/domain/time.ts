@@ -1,13 +1,16 @@
 /**
  * 주기·시간 칸 계산. 모든 기준은 KST(UTC+9, 서머타임 없음)이다.
  *
- * - 시간 칸(slot)은 30분 단위이고 ID는 KST 기준 "YYYYMMDD-HHmm"이다.
+ * - 시간 칸(slot)은 30분 단위이고 ID는 KST 기준 "YYYYMMDD-HHmm"이다. 불가 시간 입력이 이 칸을 쓴다.
+ * - 추천·확정 시간(busy)은 10분 단위(unit)로 계산한다. 보스 소요 시간이 10분 단위라, 21:00~21:20 바로 뒤를 21:20에 잡을 수 있다.
  * - 주간 주기는 목요일 00:00 ~ 다음 목요일 00:00, 월간 주기는 1일 00:00 ~ 다음 달 1일 00:00이다.
  */
 
 export type Cycle = "WEEKLY" | "MONTHLY";
 
 export const SLOT_MS = 30 * 60 * 1000;
+/** 추천·확정 시간 계산 단위 (10분) */
+export const UNIT_MS = 10 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const THURSDAY = 4;
@@ -87,6 +90,16 @@ export function slotIdToMs(slotId: string): number | null {
   return slotIdFromMs(ms) === slotId ? ms : null;
 }
 
+/** 10분 단위 ID("YYYYMMDD-HHmm", 분이 10의 배수)를 ms로. 형식이 틀리면 null */
+export function unitIdToMs(unitId: string): number | null {
+  const match = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(unitId);
+  if (!match) return null;
+  const [year, month, day, hour, minute] = match.slice(1).map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || minute % 10 !== 0) return null;
+  const ms = fromKst(year, month - 1, day, hour, minute);
+  return slotIdFromMs(ms) === unitId ? ms : null;
+}
+
 /** 주기 안에서의 칸 번호. 주기 밖이면 null */
 export function slotIndex(period: Pick<Period, "startMs" | "totalSlots">, slotId: string): number | null {
   const ms = slotIdToMs(slotId);
@@ -124,9 +137,16 @@ export function kstDateString(ms: number): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
-/** [startMs, endMs) 구간에 걸친 시간 칸 ID */
+/** [startMs, endMs) 구간에 걸친 30분 칸 ID. 시작이 칸 중간이면 그 칸부터 */
 export function slotIdsBetween(startMs: number, endMs: number): string[] {
   const ids: string[] = [];
-  for (let ms = startMs; ms < endMs; ms += SLOT_MS) ids.push(slotIdFromMs(ms));
+  for (let ms = startMs - (((startMs % SLOT_MS) + SLOT_MS) % SLOT_MS); ms < endMs; ms += SLOT_MS) ids.push(slotIdFromMs(ms));
+  return ids;
+}
+
+/** [startMs, endMs) 구간을 덮는 10분 단위 ID (확정 시간 busy 문서 ID) */
+export function unitIdsBetween(startMs: number, endMs: number): string[] {
+  const ids: string[] = [];
+  for (let ms = startMs - (((startMs % UNIT_MS) + UNIT_MS) % UNIT_MS); ms < endMs; ms += UNIT_MS) ids.push(slotIdFromMs(ms));
   return ids;
 }

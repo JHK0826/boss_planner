@@ -1,7 +1,7 @@
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
-import { changeRequestDeadline, slotIdsBetween } from "../domain/time";
-import { busyData, conflictError, readBusyConflicts, requireString } from "./confirm";
+import { changeRequestDeadline } from "../domain/time";
+import { busyData, busyIdsOf, conflictError, readBusyConflicts, requireString } from "./confirm";
 import type { Candidate, Confirmed } from "./model";
 
 type Data = Record<string, unknown> | undefined | null;
@@ -49,21 +49,21 @@ export async function switchAssignedCandidate(db: Firestore, uid: string, data: 
     }
 
     const members = confirmed.memberUids;
-    const oldSlots = slotIdsBetween(confirmed.start.toMillis(), confirmed.end.toMillis());
-    const newSlots = slotIdsBetween(candidate.start.toMillis(), candidate.end.toMillis());
-    const conflictUids = await readBusyConflicts(tx, db, members, newSlots, { partyId, periodId });
+    const next: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids: members, busyUnitMinutes: 10 };
+    const oldIds = busyIdsOf(confirmed);
+    const newIds = busyIdsOf(next);
+    const conflictUids = await readBusyConflicts(tx, db, members, candidate.start.toMillis(), candidate.end.toMillis(), { partyId, periodId });
     if (conflictUids.length > 0) throw conflictError(party, conflictUids, "다른 순위를 고르거나 일정 변경 요청을 써 주세요.");
 
-    const keep = new Set(newSlots);
+    const keep = new Set(newIds);
     for (const member of members) {
-      for (const slotId of oldSlots) {
-        if (!keep.has(slotId)) tx.delete(db.doc(`users/${member}/busy/${slotId}`));
+      for (const id of oldIds) {
+        if (!keep.has(id)) tx.delete(db.doc(`users/${member}/busy/${id}`));
       }
-      for (const slotId of newSlots) {
-        tx.set(db.doc(`users/${member}/busy/${slotId}`), busyData(party, partyId, periodId, candidate, member));
+      for (const id of newIds) {
+        tx.set(db.doc(`users/${member}/busy/${id}`), busyData(party, partyId, periodId, candidate, member));
       }
     }
-    const next: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids: members };
     tx.update(scheduleRef, {
       confirmed: next,
       confirmedAt: Timestamp.now(),

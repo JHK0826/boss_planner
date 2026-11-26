@@ -98,7 +98,7 @@ describe("투표 없이 자동 지정", () => {
     // 순위 후보 (점수순, 점수·이유 포함)
     expect(locked.candidates.map((c: { slotId: string }) => c.slotId)).toEqual(["20261114-2000", "20261114-2100"]);
     expect(locked.candidates[0]).toMatchObject({ score: expect.any(Number), reasons: [] });
-    expect(await busy("a")).toEqual(["20261114-2000", "20261114-2030"]);
+    expect(await busy("a")).toEqual(["20261114-2000", "20261114-2010", "20261114-2020", "20261114-2030", "20261114-2040", "20261114-2050"]);
     expect((await db.doc("users/b/busy/20261114-2000").get()).get("characterId")).toBe("char-b");
     expect(await evaluateSchedule(db, partyId, PERIOD, THU)).toBe("not-open");
   });
@@ -165,7 +165,7 @@ describe("투표 없이 자동 지정", () => {
       confirmedBy: "AUTO",
       confirmed: { slotId: "20261115-2000" },
     });
-    expect(await busy("b")).toEqual(["20261115-2000", "20261115-2030"]);
+    expect(await busy("b")).toEqual(["20261115-2000", "20261115-2010", "20261115-2020", "20261115-2030", "20261115-2040", "20261115-2050"]);
   });
 
   it("평소 시간: 최근 레이드가 토 21:00이었으면 토 21:00을 고른다", async () => {
@@ -211,7 +211,7 @@ describe("자동 지정 후 파티장이 다른 순위로 교체", () => {
 
     expect(await change(partyId, "a", 2)).toEqual({ slotId: "20261115-2000" });
     expect(await data(partyId)).toMatchObject({ state: "LOCKED", confirmedBy: "LEADER", confirmed: { slotId: "20261115-2000", memberUids: ["a", "b"] } });
-    for (const uid of ["a", "b"]) expect(await busy(uid)).toEqual(["20261115-2000", "20261115-2030"]);
+    for (const uid of ["a", "b"]) expect(await busy(uid)).toEqual(["20261115-2000", "20261115-2010", "20261115-2020", "20261115-2030", "20261115-2040", "20261115-2050"]);
   });
 
   it("다른 파티와 겹치거나 기한이 지나면 거절한다", async () => {

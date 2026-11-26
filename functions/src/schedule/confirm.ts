@@ -3,7 +3,7 @@ import { HttpsError } from "firebase-functions/v2/https";
 import { bossesOf } from "../domain/bosses";
 import { activeMemberUids, type MercenaryLike } from "../domain/mercenary";
 import { unanimousCandidates } from "../domain/recommend";
-import { slotIdsBetween } from "../domain/time";
+import { slotIdsBetween, unitIdsBetween } from "../domain/time";
 import type { Candidate, Confirmed } from "./model";
 
 type Data = Record<string, unknown> | undefined | null;
@@ -16,34 +16,50 @@ export function requireString(data: Data, field: string): string {
   return value;
 }
 
+/** 확정 시간의 busy 문서 ID. 0.11.2부터는 10분마다, 이전 확정은 30분 칸마다 문서가 있다. */
+export function busyIdsOf(confirmed: Pick<Confirmed, "start" | "end" | "busyUnitMinutes">): string[] {
+  const startMs = confirmed.start.toMillis();
+  const endMs = confirmed.end.toMillis();
+  return confirmed.busyUnitMinutes === 10 ? unitIdsBetween(startMs, endMs) : slotIdsBetween(startMs, endMs);
+}
+
 /** 확정된 시간의 busy 문서를 지운다. 변경 승인·재조정 때 쓴다. */
 export function releaseBusy(tx: Transaction, db: Firestore, schedule: DocumentData): void {
   const confirmed = schedule.confirmed as Confirmed | null;
   if (!confirmed) return;
-  const slotIds = slotIdsBetween(confirmed.start.toMillis(), confirmed.end.toMillis());
+  const ids = busyIdsOf(confirmed);
   for (const uid of confirmed.memberUids) {
-    for (const slotId of slotIds) tx.delete(db.doc(`users/${uid}/busy/${slotId}`));
+    for (const id of ids) tx.delete(db.doc(`users/${uid}/busy/${id}`));
   }
 }
 
 /**
- * 그 시간 칸에 이미 다른 레이드(busy)가 있는 파티원. 트랜잭션 안에서 읽으므로, 같은 사람이 속한 두 파티가
+ * [startMs, endMs)에 이미 다른 레이드(busy)가 있는 파티원. 트랜잭션 안에서 읽으므로, 같은 사람이 속한 두 파티가
  * 동시에 확정하면 나중 트랜잭션이 다시 실행되어 충돌로 걸린다.
+ *
+ * 10분 ID와, 그 구간이 걸친 30분 칸 ID(0.11.2 전 확정의 busy)를 함께 읽고, 문서에 남은 레이드 시간이
+ * 실제로 겹칠 때만 충돌로 본다. 21:00~21:20 레이드 바로 뒤 21:20 시작은 겹치지 않는다.
  * @param own 이 파티·주기의 busy는 충돌로 보지 않는다(교체할 때 원래 시간과 겹치는 칸)
  */
 export async function readBusyConflicts(
   tx: Transaction,
   db: Firestore,
   memberUids: string[],
-  slotIds: string[],
+  startMs: number,
+  endMs: number,
   own?: { partyId: string; periodId: string },
 ): Promise<string[]> {
-  const refs = memberUids.flatMap((member) => slotIds.map((slotId) => db.doc(`users/${member}/busy/${slotId}`)));
+  const ids = [...new Set([...unitIdsBetween(startMs, endMs), ...slotIdsBetween(startMs, endMs)])];
+  const refs = memberUids.flatMap((member) => ids.map((id) => db.doc(`users/${member}/busy/${id}`)));
   if (refs.length === 0) return [];
   const snaps = await tx.getAll(...refs);
-  const others = snaps.filter(
-    (snap) => snap.exists && !(own && snap.get("partyId") === own.partyId && snap.get("periodId") === own.periodId),
-  );
+  const others = snaps.filter((snap) => {
+    if (!snap.exists || (own && snap.get("partyId") === own.partyId && snap.get("periodId") === own.periodId)) return false;
+    const start = (snap.get("start") as Timestamp | undefined)?.toMillis();
+    const end = (snap.get("end") as Timestamp | undefined)?.toMillis();
+    // 시간이 없는 문서는 안전하게 충돌로 본다.
+    return start === undefined || end === undefined || (start < endMs && startMs < end);
+  });
   return [...new Set(others.map((snap) => snap.ref.parent.parent!.id))];
 }
 
@@ -93,13 +109,12 @@ export function writeLock(
   },
 ): void {
   const { party, partyId, periodId, candidate, memberUids } = args;
-  const slotIds = slotIdsBetween(candidate.start.toMillis(), candidate.end.toMillis());
+  const confirmed: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids, busyUnitMinutes: 10 };
   for (const member of memberUids) {
-    for (const slotId of slotIds) {
-      tx.create(db.doc(`users/${member}/busy/${slotId}`), busyData(party, partyId, periodId, candidate, member));
+    for (const id of busyIdsOf(confirmed)) {
+      tx.create(db.doc(`users/${member}/busy/${id}`), busyData(party, partyId, periodId, candidate, member));
     }
   }
-  const confirmed: Confirmed = { slotId: candidate.slotId, start: candidate.start, end: candidate.end, memberUids };
   tx.update(args.scheduleRef, {
     state: "LOCKED",
     confirmed,
@@ -116,7 +131,7 @@ export function writeLock(
  *
  * 한 트랜잭션에서 ① 일정이 아직 OPEN/RETRY인지, ② 그 후보에 전원이 동의했는지,
  * ③ 파티원 전원의 busy에 겹치는 칸이 없는지 확인한 뒤 LOCKED로 바꾸고 busy를 기록한다.
- * busy 문서 ID가 시간 칸마다 고정이라, 같은 사람이 속한 두 파티가 동시에 확정하면
+ * busy 문서 ID가 10분마다 고정이라, 같은 사람이 속한 두 파티가 동시에 확정하면
  * 나중 트랜잭션이 다시 실행되어 충돌로 거절된다.
  */
 export async function confirmSchedule(
@@ -180,7 +195,7 @@ export async function confirmSchedule(
       throw new HttpsError("failed-precondition", "이미 지난 시간은 확정할 수 없습니다.", { reason: "past" });
     }
 
-    const conflictUids = await readBusyConflicts(tx, db, memberUids, slotIdsBetween(startMs, endMs));
+    const conflictUids = await readBusyConflicts(tx, db, memberUids, startMs, endMs);
     if (conflictUids.length > 0) throw conflictError(party, conflictUids, "다른 후보를 확정하거나 다시 투표해 주세요.");
 
     writeLock(tx, db, {

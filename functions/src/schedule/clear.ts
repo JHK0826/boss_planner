@@ -2,7 +2,7 @@ import { Timestamp, type DocumentReference, type Firestore } from "firebase-admi
 import type { SecretCharacter } from "../characters";
 import { deleteStaleSchedulerCaches, refreshStaleCharacterInfo, refreshStaleCharacterLists } from "../characterRefresh";
 import { finalizeEarnings } from "../earnings/service";
-import { SLOT_MS, kstDateString } from "../domain/time";
+import { kstDateString } from "../domain/time";
 import { bossesOf } from "../domain/bosses";
 import { NexonClient, allBossesCompleted } from "../nexon/client";
 import { releaseBusy } from "./confirm";
@@ -44,7 +44,8 @@ export async function resolveRaidResult(
       return "settled";
     }
 
-    const canRetry = nowMs + (schedule.durationSlots as number) * SLOT_MS <= (schedule.periodEnd as Timestamp).toMillis();
+    const durationMs = ((schedule.durationMinutes as number | undefined) ?? (schedule.durationSlots as number) * 30) * 60_000;
+    const canRetry = nowMs + durationMs <= (schedule.periodEnd as Timestamp).toMillis();
     if (!canRetry) {
       tx.update(scheduleRef, { state: "EXPIRED", expiredReason: "NOT_CLEARED", updatedAt: Timestamp.now() });
       return "expired";

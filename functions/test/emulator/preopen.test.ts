@@ -152,13 +152,14 @@ describe("미리 제출·투표와 확정", () => {
 
     // a가 속한 다른 파티가 같은 다음 주를 추천받을 때, 위 파티의 후보 칸(토 20:00~21:00)을 투표 중 후보로 본다.
     const { partyId: other } = await createParty(db, "a", { name: "데미안팟", bosses: [{ name: "데미안", difficulty: "HARD" }], durationMinutes: 60, characterId: "char-a" }, THU);
-    const slots = await loadPendingSlots(db, other, ["a"], ["char-a"], { startMs: NEXT_THU, totalSlots: 7 * 48 }, early);
-    const saturday20 = 2 * 48 + 40;
+    // 칸 번호는 10분 단위 (하루 144칸)
+    const slots = await loadPendingSlots(db, other, ["a"], ["char-a"], { startMs: NEXT_THU, totalSlots: 7 * 144 }, early);
+    const saturday20 = 2 * 144 + 120;
     expect(slots.all).toContain(saturday20);
     expect(slots.byMember[0]).toContain(saturday20);
     // 두 파티 모두 a의 같은 캐릭터(char-a)라 같은 캐릭터 칸에도 들어간다.
     expect(slots.sameCharacterByMember[0]).toContain(saturday20);
-    const otherCharacter = await loadPendingSlots(db, other, ["a"], ["char-a2"], { startMs: NEXT_THU, totalSlots: 7 * 48 }, early);
+    const otherCharacter = await loadPendingSlots(db, other, ["a"], ["char-a2"], { startMs: NEXT_THU, totalSlots: 7 * 144 }, early);
     expect(otherCharacter.byMember[0]).toContain(saturday20);
     expect(otherCharacter.sameCharacterByMember[0]).toEqual([]);
   });

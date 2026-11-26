@@ -1,6 +1,6 @@
 import type { DocumentData, Firestore, Timestamp } from "firebase-admin/firestore";
 import { replacedUids, type MercenaryLike } from "../domain/mercenary";
-import { SLOT_MS, currentPeriod, type Cycle } from "../domain/time";
+import { UNIT_MS, currentPeriod, type Cycle } from "../domain/time";
 import type { Candidate } from "./model";
 
 export interface OtherParty {
@@ -57,6 +57,7 @@ export async function loadPendingSlots(
   memberUids: string[],
   /** 이 파티에서 각 파티원의 캐릭터 (memberUids와 같은 순서) */
   memberCharacterIds: (string | undefined)[],
+  /** totalSlots는 10분 칸 수 */
   period: { startMs: number; totalSlots: number },
   nowMs: number,
 ): Promise<PendingSlots> {
@@ -79,8 +80,9 @@ export async function loadPendingSlots(
         return !!mine && members[memberUids[i]]?.characterId === mine;
       });
       for (const candidate of (schedule.get("candidates") as Candidate[] | undefined) ?? []) {
-        const first = Math.floor(((candidate.start as Timestamp).toMillis() - period.startMs) / SLOT_MS);
-        const last = Math.floor(((candidate.end as Timestamp).toMillis() - 1 - period.startMs) / SLOT_MS);
+        // 10분 칸 번호 (evaluate의 추천 칸과 같은 단위)
+        const first = Math.floor(((candidate.start as Timestamp).toMillis() - period.startMs) / UNIT_MS);
+        const last = Math.floor(((candidate.end as Timestamp).toMillis() - 1 - period.startMs) / UNIT_MS);
         for (let index = Math.max(first, 0); index <= last && index < period.totalSlots; index++) {
           all.add(index);
           for (const memberIndex of involved) byMember[memberIndex].add(index);
