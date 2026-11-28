@@ -208,6 +208,7 @@ class PartyRepository(
                 doc.id to Unavailable(
                     slots = (doc.get("slots") as? List<*>)?.filterIsInstance<String>().orEmpty(),
                     submitted = doc.getBoolean("submitted") ?: false,
+                    carried = doc.getString("carriedFrom") != null,
                 )
             }
         }
@@ -222,9 +223,24 @@ class PartyRepository(
             }
         }
 
-    suspend fun setUnavailable(partyId: String, periodId: String, uid: String, slots: List<String>, submitted: Boolean) {
+    /** @param shareToOthers 내 다른 파티에도 같은 시간으로 냈는가. 끄고 냈으면 나중에 열리는 다른 파티 일정에 서버가 가져가지 않는다. */
+    suspend fun setUnavailable(
+        partyId: String,
+        periodId: String,
+        uid: String,
+        slots: List<String>,
+        submitted: Boolean,
+        shareToOthers: Boolean = true,
+    ) {
         scheduleRef(partyId, periodId).collection("unavailable").document(uid)
-            .set(mapOf("slots" to slots.sorted(), "submitted" to submitted, "updatedAt" to FieldValue.serverTimestamp()))
+            .set(
+                mapOf(
+                    "slots" to slots.sorted(),
+                    "submitted" to submitted,
+                    "shareToOthers" to shareToOthers,
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                ),
+            )
             .await()
     }
 
@@ -233,8 +249,13 @@ class PartyRepository(
      * 투표 없이 자동 지정하는 파티끼리 서버가 "동시에 다 냈다"로 보고 결정석 값으로 순서를 정한다.
      * @param targets (partyId, periodId) 목록. 하나라도 보안 규칙에 막히면 전부 쓰이지 않는다.
      */
-    suspend fun submitUnavailableBatch(targets: List<Pair<String, String>>, uid: String, slots: List<String>) {
-        val data = mapOf("slots" to slots.sorted(), "submitted" to true, "updatedAt" to FieldValue.serverTimestamp())
+    suspend fun submitUnavailableBatch(targets: List<Pair<String, String>>, uid: String, slots: List<String>, shareToOthers: Boolean = true) {
+        val data = mapOf(
+            "slots" to slots.sorted(),
+            "submitted" to true,
+            "shareToOthers" to shareToOthers,
+            "updatedAt" to FieldValue.serverTimestamp(),
+        )
         val batch = db.batch()
         for ((partyId, periodId) in targets) {
             batch.set(scheduleRef(partyId, periodId).collection("unavailable").document(uid), data)

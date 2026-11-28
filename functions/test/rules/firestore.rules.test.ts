@@ -162,6 +162,13 @@ describe("unavailable", () => {
     await seed("LOCKED");
     await assertFails(setDoc(doc(db(MEMBER), `${SCHEDULE}/unavailable/${MEMBER}`), mine));
   });
+
+  it("다른 파티에도 냈는지(shareToOthers)는 참·거짓으로만 쓰고, 자동 입력 표시(carriedFrom)는 쓸 수 없다", async () => {
+    const ref = doc(db(MEMBER), `${SCHEDULE}/unavailable/${MEMBER}`);
+    await assertSucceeds(setDoc(ref, { ...mine, shareToOthers: false }));
+    await assertFails(setDoc(ref, { ...mine, shareToOthers: "no" }));
+    await assertFails(setDoc(ref, { ...mine, carriedFrom: "other" }));
+  });
 });
 
 describe("votes", () => {

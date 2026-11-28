@@ -174,7 +174,8 @@ data class Raid(
     val endMs: Long,
 )
 
-data class Unavailable(val slots: List<String>, val submitted: Boolean)
+/** @param carried 다른 파티에 낸 같은 주기 불가 시간을 서버가 자동으로 넣어 둔 것 (본인이 고쳐 내면 false) */
+data class Unavailable(val slots: List<String>, val submitted: Boolean, val carried: Boolean = false)
 
 data class Vote(val agreed: List<Int>, val round: Int)
 

@@ -116,7 +116,9 @@ service cloud.firestore {
         match /unavailable/{uid} {
           allow read: if isMember(partyId);
           allow create, update: if isSelf(uid) && isMember(partyId) && acceptsInput(partyId, periodId)
-            && request.resource.data.keys().hasOnly(['slots', 'submitted', 'updatedAt'])
+            && request.resource.data.keys().hasOnly(['slots', 'submitted', 'updatedAt', 'shareToOthers'])
+            // 내 다른 파티에도 같은 시간으로 냈는가. 끄고 냈으면 나중에 열리는 다른 파티 일정에 가져가지 않는다.
+            && (!('shareToOthers' in request.resource.data) || request.resource.data.shareToOthers is bool)
             && request.resource.data.slots is list
             && request.resource.data.slots.size() <= 1500
             && request.resource.data.submitted is bool
