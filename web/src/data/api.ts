@@ -195,7 +195,7 @@ export const recentSchedules = (partyId: string, count = 5): Subscribe<Schedule[
 export const unavailable = (partyId: string, periodId: string): Subscribe<Record<string, Unavailable>> =>
   listen(collection(scheduleDoc(partyId, periodId), "unavailable"), {}, (snapshot) =>
     Object.fromEntries(
-      snapshot.docs.map((d) => [d.id, { slots: (d.get("slots") as string[] | undefined) ?? [], submitted: d.get("submitted") === true }]),
+      snapshot.docs.map((d) => [d.id, toUnavailable(d.get("slots"), d.get("submitted"), d.get("carriedFrom"))]),
     ),
   );
 
@@ -304,11 +304,21 @@ export async function scheduleOnce(partyId: string, periodId: string): Promise<S
 export async function myUnavailableOnce(partyId: string, periodId: string, uid: string): Promise<Unavailable | null> {
   const snapshot = await getDoc(doc(scheduleDoc(partyId, periodId), "unavailable", uid));
   if (!snapshot.exists()) return null;
-  return { slots: (snapshot.get("slots") as string[] | undefined) ?? [], submitted: snapshot.get("submitted") === true };
+  return toUnavailable(snapshot.get("slots"), snapshot.get("submitted"), snapshot.get("carriedFrom"));
 }
 
-export const setUnavailable = (partyId: string, periodId: string, uid: string, slots: string[], submitted: boolean) =>
-  setDoc(doc(scheduleDoc(partyId, periodId), "unavailable", uid), { slots: [...slots].sort(), submitted, updatedAt: serverTimestamp() });
+/** carriedFrom: 서버가 다른 파티에 낸 같은 주기 불가 시간을 새 일정에 넣어 둔 문서 (본인이 고쳐 내면 사라진다) */
+const toUnavailable = (slots: unknown, submitted: unknown, carriedFrom: unknown): Unavailable => ({
+  slots: Array.isArray(slots) ? slots.filter((s): s is string => typeof s === "string") : [],
+  submitted: submitted === true,
+  carried: typeof carriedFrom === "string",
+});
+
+/**
+ * @param shareToOthers 내 다른 파티에도 같은 시간으로 냈는가. 끄고 냈으면 나중에 열리는 다른 파티 일정에 서버가 가져가지 않는다.
+ */
+export const setUnavailable = (partyId: string, periodId: string, uid: string, slots: string[], submitted: boolean, shareToOthers = true) =>
+  setDoc(doc(scheduleDoc(partyId, periodId), "unavailable", uid), { slots: [...slots].sort(), submitted, shareToOthers, updatedAt: serverTimestamp() });
 
 export const setVote = (partyId: string, periodId: string, uid: string, agreed: number[], round: number) =>
   setDoc(doc(scheduleDoc(partyId, periodId), "votes", uid), { agreed: [...agreed].sort((a, b) => a - b), round, updatedAt: serverTimestamp() });
@@ -381,6 +391,7 @@ export async function memberImages(p: Party): Promise<Record<string, string>> {
  * 모든 문서를 한 번의 batch로 써서 같은 순간(같은 updatedAt)에 생기게 한다. 그래야 투표 없이 자동 지정하는 파티끼리
  * 서버가 "동시에 다 냈다"로 보고 결정석 값으로 순서를 정한다. batch가 막히면(그 사이 한 파티가 확정됨 등)
  * 이 파티를 먼저 쓰고 나머지를 하나씩 쓴다. 이 파티가 실패하면 예외를 던지고, 다른 파티가 실패하면 건너뛴다.
+ * 내 다른 파티에도 제출하면(shareToOthers) 아직 열리지 않은 다른 파티 일정에도, 나중에 열릴 때 서버가 이 시간을 넣는다.
  * @returns 함께 제출한 다른 파티 수
  */
 export async function submitUnavailable(
@@ -390,9 +401,10 @@ export async function submitUnavailable(
   slots: string[],
   otherParties: Party[] = [],
   period?: { periodStartMs: number; periodEndMs: number },
+  shareToOthers = true,
 ): Promise<number> {
-  const targets = period ? await otherTargets(otherParties, period, uid) : [];
-  const data = { slots: [...slots].sort(), submitted: true, updatedAt: serverTimestamp() };
+  const targets = period && shareToOthers ? await otherTargets(otherParties, period, uid) : [];
+  const data = { slots: [...slots].sort(), submitted: true, shareToOthers, updatedAt: serverTimestamp() };
   try {
     const batch = writeBatch(db);
     for (const target of [{ partyId, periodId }, ...targets]) {
@@ -401,7 +413,7 @@ export async function submitUnavailable(
     await batch.commit();
     return targets.length;
   } catch {
-    await setUnavailable(partyId, periodId, uid, slots, true);
+    await setUnavailable(partyId, periodId, uid, slots, true, shareToOthers);
     let submitted = 0;
     for (const target of targets) {
       try {

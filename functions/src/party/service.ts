@@ -19,6 +19,7 @@ import {
   slotsForMinutes,
   type PreferredWindow,
 } from "../schedule/model";
+import { carryOverQuietly } from "../schedule/carryOver";
 
 export { MAX_PARTY_SIZE };
 export const MAX_DURATION_MINUTES = MAX_BOSSES_PER_PARTY * MINUTES_PER_BOSS;
@@ -397,7 +398,7 @@ export async function startSchedule(db: Firestore, uid: string, data: Data, nowM
   const partyId = text(data, "partyId", 64);
   const partyRef = db.doc(`parties/${partyId}`);
 
-  return db.runTransaction(async (tx) => {
+  const started = await db.runTransaction(async (tx) => {
     const party = (await tx.get(partyRef)).data();
     if (!party || party.leaderUid !== uid) {
       throw new HttpsError("permission-denied", "파티장만 일정을 시작할 수 있습니다.", { reason: "not-leader" });
@@ -416,6 +417,9 @@ export async function startSchedule(db: Firestore, uid: string, data: Data, nowM
     const endOfToday = startOfKstDay(nowMs) + 24 * 60 * 60 * 1000;
     tx.create(scheduleRef, newScheduleData(period, durationMinutes, Math.min(endOfToday, period.endMs)));
     tx.update(partyRef, { scheduleStarted: true });
-    return { periodId: period.id };
+    return { periodId: period.id, memberUids: (party.memberUids as string[] | undefined) ?? [] };
   });
+  // 파티원이 이번 주기의 다른 파티에 이미 낸 불가 시간을 넣는다.
+  await carryOverQuietly(db, partyId, started.periodId, started.memberUids);
+  return { periodId: started.periodId };
 }

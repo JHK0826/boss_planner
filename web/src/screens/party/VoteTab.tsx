@@ -89,6 +89,11 @@ export function VoteTab() {
           {(upcoming ? "다음 주 " : "") + (unavailable[uid]?.submitted ? "불가 시간 수정" : "불가 시간 입력")}
         </button>
       )}
+      {inputOpen && schedule && !replaced && unavailable[uid]?.carried && (
+        <p className="small muted" style={{ margin: 0 }}>
+          다른 파티에 낸 {upcoming ? "다음 주 " : ""}불가 시간으로 자동 제출했습니다. 이 파티만 다르면 고쳐 주세요.
+        </p>
+      )}
     </>
   );
 }

@@ -1,5 +1,6 @@
 import type { DocumentData, Firestore, Timestamp } from "firebase-admin/firestore";
 import { currentPeriod, type Cycle } from "../domain/time";
+import { carryOverQuietly } from "./carryOver";
 import { evaluateSchedule } from "./evaluate";
 import { durationMinutesOf, newScheduleData } from "./model";
 
@@ -28,6 +29,8 @@ export async function openSchedules(db: Firestore, cycle: Cycle, nowMs: number):
     try {
       await scheduleRef.create(newScheduleData(period, durationMinutesOf(party.data())));
       created++;
+      // 파티원이 같은 주기의 다른 파티에 이미 낸 불가 시간을 넣는다.
+      await carryOverQuietly(db, party.id, period.id, (party.get("memberUids") as string[] | undefined) ?? []);
     } catch (error) {
       if ((error as { code?: number }).code !== ALREADY_EXISTS) throw error;
       const existing = await scheduleRef.get();
@@ -72,6 +75,8 @@ export async function openNextPeriod(
       .collection("schedules")
       .doc(next.id)
       .create({ ...newScheduleData(next, durationMinutesOf(party)), preOpened: true });
+    // 다른 파티에 다음 주 불가 시간을 미리 낸 파티원은 다시 내지 않아도 되게 넣어 둔다.
+    await carryOverQuietly(db, partyId, next.id, (party.memberUids as string[] | undefined) ?? []);
     return next.id;
   } catch (error) {
     if ((error as { code?: number }).code === ALREADY_EXISTS) return null;

@@ -685,6 +685,13 @@ private fun ScheduleTab(
             ) {
                 Text((if (upcoming) "다음 주 " else "") + if (unavailable[uid]?.submitted == true) "불가 시간 수정" else "불가 시간 입력")
             }
+            if (unavailable[uid]?.carried == true) {
+                Text(
+                    "다른 파티에 낸 ${if (upcoming) "다음 주 " else ""}불가 시간으로 자동 제출했습니다. 이 파티만 다르면 고쳐 주세요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

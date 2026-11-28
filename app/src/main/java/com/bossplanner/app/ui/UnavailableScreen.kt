@@ -174,7 +174,7 @@ fun UnavailableScreen(
                     scope.launch {
                         try {
                             val others = submitUnavailable(
-                                parties, partyId, target, uid, slots, if (applyToOthers) otherParties else emptyList(),
+                                parties, partyId, target, uid, slots, if (applyToOthers) otherParties else emptyList(), applyToOthers,
                             )
                             showMessage.show(
                                 if (others > 0) "불가 시간을 제출했습니다 (다른 파티 ${others}곳에도 제출)" else "불가 시간을 제출했습니다",
@@ -214,6 +214,8 @@ private suspend fun submitUnavailable(
     uid: String,
     slots: List<String>,
     otherParties: List<Party>,
+    /** 내 다른 파티에도 제출. 켜 두면 아직 열리지 않은 다른 파티 일정에도 나중에 열릴 때 서버가 이 시간을 넣는다 */
+    shareToOthers: Boolean,
 ): Int {
     val others = coroutineScope {
         otherParties.map { party ->
@@ -229,12 +231,12 @@ private suspend fun submitUnavailable(
         }.awaitAll().filterNotNull()
     }
     try {
-        parties.submitUnavailableBatch(listOf(partyId to target.periodId) + others, uid, slots)
+        parties.submitUnavailableBatch(listOf(partyId to target.periodId) + others, uid, slots, shareToOthers)
         return others.size
     } catch (e: Exception) {
         if (e is CancellationException) throw e
     }
-    parties.setUnavailable(partyId, target.periodId, uid, slots, submitted = true)
+    parties.setUnavailable(partyId, target.periodId, uid, slots, submitted = true, shareToOthers = shareToOthers)
     var submitted = 0
     for ((otherId, periodId) in others) {
         try {

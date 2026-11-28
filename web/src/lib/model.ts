@@ -153,6 +153,8 @@ export const settlementOpen = (schedule: Schedule): boolean =>
 export interface Unavailable {
   slots: string[];
   submitted: boolean;
+  /** 다른 파티에 낸 같은 주기 불가 시간을 서버가 자동으로 넣어 둔 것 (본인이 고쳐 내면 false) */
+  carried?: boolean;
 }
 
 export interface Vote {
